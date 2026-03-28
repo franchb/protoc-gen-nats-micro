@@ -105,10 +105,10 @@ type ClientStreamReceiver struct {
   sub       *nats.Subscription
   msgCh     chan *nats.Msg
   done      chan struct{}
-  lastErr   error
   ordered   bool
   lastSeq   int
   mu        sync.Mutex
+  closeOnce sync.Once
 }
 
 func newClientStreamReceiver(nc *nats.Conn, inbox string, ordered bool) (*ClientStreamReceiver, error) {
@@ -116,11 +116,6 @@ func newClientStreamReceiver(nc *nats.Conn, inbox string, ordered bool) (*Client
   done := make(chan struct{})
 
   sub, err := nc.Subscribe(inbox, func(msg *nats.Msg) {
-    // Check for end-of-stream
-    if msg.Header.Get(natsStreamEndHeader) == "true" {
-      close(done)
-      return
-    }
     select {
     case msgCh <- msg:
     case <-done:
@@ -145,12 +140,24 @@ func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
   select {
   case msg, ok := <-r.msgCh:
     if !ok {
-      return nil, fmt.Errorf("stream closed")
+      return nil, errors.New("stream closed")
     }
-    // Check for error in stream
-    if status := msg.Header.Get("Nats-Service-Error-Code"); status != "" {
-      desc := msg.Header.Get("Nats-Service-Error")
-      return nil, fmt.Errorf("stream error [%s]: %s", status, desc)
+    if msg.Header.Get(natsStreamEndHeader) == "true" {
+      if status := msg.Header.Get("Status"); status != "" {
+        desc := msg.Header.Get("Description")
+        if desc == "" {
+          desc = "stream error"
+        }
+        return nil, fmt.Errorf("stream error [%s]: %s", status, desc)
+      }
+      if status := msg.Header.Get("Nats-Service-Error-Code"); status != "" {
+        desc := msg.Header.Get("Nats-Service-Error")
+        if desc == "" {
+          desc = "stream error"
+        }
+        return nil, fmt.Errorf("stream error [%s]: %s", status, desc)
+      }
+      return nil, io.EOF
     }
     // Enforce ordering if requested
     if r.ordered {
@@ -168,7 +175,7 @@ func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
     }
     return msg, nil
   case <-r.done:
-    return nil, fmt.Errorf("EOF")
+    return nil, errors.New("stream closed")
   case <-ctx.Done():
     return nil, ctx.Err()
   }
@@ -176,7 +183,12 @@ func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
 
 // Close unsubscribes from the stream
 func (r *ClientStreamReceiver) Close() error {
-  return r.sub.Unsubscribe()
+  var err error
+  r.closeOnce.Do(func() {
+    close(r.done)
+    err = r.sub.Unsubscribe()
+  })
+  return err
 }
 
 // Suppress unused import warnings

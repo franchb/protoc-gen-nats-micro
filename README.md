@@ -777,15 +777,13 @@ task --list
 
 ## Streaming
 
-**Not supported.** NATS micro uses request-reply (1:1), not gRPC-style streaming.
+Streaming RPC is supported across the generator today.
 
-**Alternatives:**
+- Use [Streaming RPC](docs/guide/streaming.md) for typed server-streaming, client-streaming, and bidi helpers over NATS.
+- Use [KV & Object Store](docs/guide/kv-object-store.md) when you want post-RPC persistence of whole protobuf messages.
+- Use `chunked_io` on simple Go streaming blob methods when you want generated `io.Reader` / `io.Writer` helpers on top of streaming.
 
-- **Pagination**: Use page tokens for large results
-- **JetStream**: Use NATS JetStream directly for real-time event streams
-- **Multiple calls**: Make sequential unary requests
-
-For streaming, use JetStream - it's more powerful than trying to replicate gRPC streaming in micro.
+For larger payload transfer, prefer a streaming RPC with a simple `bytes` chunk message instead of overloading `object_store`.
 
 ## Contributing
 

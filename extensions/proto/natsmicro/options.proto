@@ -120,6 +120,15 @@ message StreamOptions {
   bool ordered = 2;
 }
 
+// Chunked I/O helpers for simple blob transfer over streaming RPCs.
+message ChunkedIOOptions {
+  // Name of the bytes field carrying each payload chunk.
+  string chunk_field = 1;
+
+  // Default chunk size for generated helpers when the caller passes 0.
+  int32 default_chunk_size = 2;
+}
+
 extend google.protobuf.ServiceOptions { ServiceOptions service = 50001; }
 
 extend google.protobuf.MethodOptions {
@@ -127,4 +136,5 @@ extend google.protobuf.MethodOptions {
   KVStoreOptions kv_store = 50003;
   ObjectStoreOptions object_store = 50004;
   StreamOptions stream = 50005;
+  ChunkedIOOptions chunked_io = 50006;
 }

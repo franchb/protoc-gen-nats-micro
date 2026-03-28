@@ -43,6 +43,16 @@ func GenerateFile(gen *protogen.Plugin, file *protogen.File, lang Language) erro
 			continue
 		}
 
+		for _, method := range service.Methods {
+			methodOpts := GetEndpointOptions(method)
+			if methodOpts.Skip {
+				continue
+			}
+			if err := ValidateMethodOptions(method); err != nil {
+				return fmt.Errorf("validate method %s: %w", method.GoName, err)
+			}
+		}
+
 		if err := lang.Generate(g, file, service, opts); err != nil {
 			return fmt.Errorf("generate service %s: %w", service.GoName, err)
 		}

@@ -93,6 +93,7 @@ type EndpointOptions struct {
 	KVStore     *KVStoreOpts      // KV store options (nil if not set)
 	ObjectStore *ObjectStoreOpts  // Object store options (nil if not set)
 	Stream      *StreamOpts       // Streaming options (nil if not set)
+	ChunkedIO   *ChunkedIOOpts    // Chunked I/O helper options (nil if not set)
 }
 
 // KVStoreOpts contains KV store persistence options for a method
@@ -118,6 +119,13 @@ type ObjectStoreOpts struct {
 type StreamOpts struct {
 	MaxInflight int32 // Max concurrent in-flight messages (0 = unlimited)
 	Ordered     bool  // Guarantee ordering via sequence headers
+}
+
+// ChunkedIOOpts contains helper generation options for simple bytes chunk streams.
+type ChunkedIOOpts struct {
+	ChunkField       string
+	GoFieldName      string
+	DefaultChunkSize int32
 }
 
 // GetEndpointOptions extracts endpoint options from proto method definition
@@ -175,6 +183,25 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 		opts.Stream = &StreamOpts{
 			MaxInflight: streamOpts.MaxInflight,
 			Ordered:     streamOpts.Ordered,
+		}
+	}
+
+	// Chunked I/O options
+	if chunkOpts, ok := getExtension[*natspb.ChunkedIOOptions](methodOpts, natspb.E_ChunkedIo); ok {
+		chunkField := chunkOpts.ChunkField
+		if chunkField == "" {
+			chunkField = defaultChunkFieldName
+		}
+
+		effectiveChunkSize := chunkOpts.DefaultChunkSize
+		if effectiveChunkSize == 0 {
+			effectiveChunkSize = defaultChunkSize
+		}
+
+		opts.ChunkedIO = &ChunkedIOOpts{
+			ChunkField:       chunkField,
+			GoFieldName:      fieldNameToGoGetter(chunkField),
+			DefaultChunkSize: effectiveChunkSize,
 		}
 	}
 

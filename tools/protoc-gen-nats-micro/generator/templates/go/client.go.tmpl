@@ -316,6 +316,56 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Close() error {
   return s.receiver.Close()
 }
 
+{{- if $endpointOpts.ChunkedIO}}
+
+// RecvBytes drains the stream into a single byte slice.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) RecvBytes(ctx context.Context) ([]byte, error) {
+  var data []byte
+  for {
+    resp, err := s.Recv(ctx)
+    if err != nil {
+      if errors.Is(err, io.EOF) {
+        return data, nil
+      }
+      return nil, err
+    }
+    data = append(data, resp.Get{{$endpointOpts.ChunkedIO.GoFieldName}}()...)
+  }
+}
+
+// RecvToWriter drains the stream into w without materializing the whole payload.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) RecvToWriter(ctx context.Context, w io.Writer) error {
+  for {
+    resp, err := s.Recv(ctx)
+    if err != nil {
+      if errors.Is(err, io.EOF) {
+        return nil
+      }
+      return err
+    }
+    if _, err := w.Write(resp.Get{{$endpointOpts.ChunkedIO.GoFieldName}}()); err != nil {
+      return fmt.Errorf("failed to write chunk: %w", err)
+    }
+  }
+}
+
+// RecvToFile drains the stream into a file at path.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) RecvToFile(ctx context.Context, path string) error {
+  f, err := os.Create(path)
+  if err != nil {
+    return fmt.Errorf("failed to create file: %w", err)
+  }
+  if err := s.RecvToWriter(ctx, f); err != nil {
+    f.Close()
+    return err
+  }
+  if err := f.Close(); err != nil {
+    return fmt.Errorf("failed to close file: %w", err)
+  }
+  return nil
+}
+{{- end}}
+
 // {{.GoName}} initiates a server-streaming RPC call.
 // Returns a stream that yields responses from the server.
 func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{{.Input.GoIdent.GoName}}) (*{{$.Service.GoName}}_{{.GoName}}_ClientStream, error) {
@@ -515,6 +565,56 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Send(msg *{{.Input.GoIde
   return s.nc.PublishMsg(m)
 }
 
+{{- if $endpointOpts.ChunkedIO}}
+
+// SendBytes sends a single payload chunk to the server.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) SendBytes(data []byte) error {
+  return s.Send(&{{.Input.GoIdent.GoName}}{
+    {{$endpointOpts.ChunkedIO.GoFieldName}}: data,
+  })
+}
+
+// SendReader copies r into chunked stream messages.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) SendReader(r io.Reader, chunkSize int) error {
+  if chunkSize <= 0 {
+    chunkSize = {{$endpointOpts.ChunkedIO.DefaultChunkSize}}
+  }
+
+  buf := make([]byte, chunkSize)
+  for {
+    n, err := r.Read(buf)
+    if n > 0 {
+      if sendErr := s.SendBytes(buf[:n]); sendErr != nil {
+        return sendErr
+      }
+    }
+    if err != nil {
+      if errors.Is(err, io.EOF) {
+        return nil
+      }
+      return fmt.Errorf("failed to read chunk: %w", err)
+    }
+  }
+}
+
+// SendFile streams a file to the server in chunked messages.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) SendFile(path string, chunkSize int) error {
+  f, err := os.Open(path)
+  if err != nil {
+    return fmt.Errorf("failed to open file: %w", err)
+  }
+
+  if err := s.SendReader(f, chunkSize); err != nil {
+    f.Close()
+    return err
+  }
+  if err := f.Close(); err != nil {
+    return fmt.Errorf("failed to close file: %w", err)
+  }
+  return nil
+}
+{{- end}}
+
 // CloseAndRecv signals end of client messages and waits for the server's response.
 func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context.Context) (*{{.Output.GoIdent.GoName}}, error) {
   // Send end-of-stream marker
@@ -537,6 +637,23 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context
   natsMsg, err := sub.NextMsgWithContext(ctx)
   if err != nil {
     return nil, fmt.Errorf("failed to receive response: %w", err)
+  }
+
+  if code := natsMsg.Header.Get("Status"); code != "" {
+    description := natsMsg.Header.Get("Description")
+    return nil, &{{$.Service.GoName}}Error{
+      Code:    code,
+      Method:  "{{.GoName}}",
+      Message: description,
+    }
+  }
+  if code := natsMsg.Header.Get("Nats-Service-Error-Code"); code != "" {
+    description := natsMsg.Header.Get("Nats-Service-Error")
+    return nil, &{{$.Service.GoName}}Error{
+      Code:    code,
+      Method:  "{{.GoName}}",
+      Message: description,
+    }
   }
 
   var resp {{.Output.GoIdent.GoName}}
