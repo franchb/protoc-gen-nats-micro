@@ -349,20 +349,13 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) RecvToWriter(ctx context
   }
 }
 
-// RecvToFile drains the stream into a file at path.
+// RecvToFile drains the stream into a file at path atomically.
+// The file is written to a temporary location first, then renamed into place.
+// On error, no partial file is left at path.
 func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) RecvToFile(ctx context.Context, path string) error {
-  f, err := os.Create(path)
-  if err != nil {
-    return fmt.Errorf("failed to create file: %w", err)
-  }
-  if err := s.RecvToWriter(ctx, f); err != nil {
-    f.Close()
-    return err
-  }
-  if err := f.Close(); err != nil {
-    return fmt.Errorf("failed to close file: %w", err)
-  }
-  return nil
+  return writeFileAtomically(path, func(w io.Writer) error {
+    return s.RecvToWriter(ctx, w)
+  })
 }
 {{- end}}
 
@@ -564,56 +557,6 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Send(msg *{{.Input.GoIde
   m.Header.Set(natsStreamSeqHeader, strconv.Itoa(seq))
   return s.nc.PublishMsg(m)
 }
-
-{{- if $endpointOpts.ChunkedIO}}
-
-// SendBytes sends a single payload chunk to the server.
-func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) SendBytes(data []byte) error {
-  return s.Send(&{{.Input.GoIdent.GoName}}{
-    {{$endpointOpts.ChunkedIO.GoFieldName}}: data,
-  })
-}
-
-// SendReader copies r into chunked stream messages.
-func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) SendReader(r io.Reader, chunkSize int) error {
-  if chunkSize <= 0 {
-    chunkSize = {{$endpointOpts.ChunkedIO.DefaultChunkSize}}
-  }
-
-  buf := make([]byte, chunkSize)
-  for {
-    n, err := r.Read(buf)
-    if n > 0 {
-      if sendErr := s.SendBytes(buf[:n]); sendErr != nil {
-        return sendErr
-      }
-    }
-    if err != nil {
-      if errors.Is(err, io.EOF) {
-        return nil
-      }
-      return fmt.Errorf("failed to read chunk: %w", err)
-    }
-  }
-}
-
-// SendFile streams a file to the server in chunked messages.
-func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) SendFile(path string, chunkSize int) error {
-  f, err := os.Open(path)
-  if err != nil {
-    return fmt.Errorf("failed to open file: %w", err)
-  }
-
-  if err := s.SendReader(f, chunkSize); err != nil {
-    f.Close()
-    return err
-  }
-  if err := f.Close(); err != nil {
-    return fmt.Errorf("failed to close file: %w", err)
-  }
-  return nil
-}
-{{- end}}
 
 // CloseAndRecv signals end of client messages and waits for the server's response.
 func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context.Context) (*{{.Output.GoIdent.GoName}}, error) {

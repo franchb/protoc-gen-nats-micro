@@ -47,10 +47,11 @@ func ValidateChunkedIO(method *protogen.Method, opts *ChunkedIOOpts) error {
 	}
 	if len(msg.Fields) != 1 {
 		return fmt.Errorf(
-			"method %s: chunked_io requires streamed message %s to contain only bytes field %q",
+			"method %s: chunked_io requires streamed message %s to contain only bytes field %q (got %d fields)",
 			method.GoName,
 			msg.GoIdent.GoName,
 			opts.ChunkField,
+			len(msg.Fields),
 		)
 	}
 

@@ -100,8 +100,8 @@ func TestGenerateFileRejectsChunkedIOWithExtraFields(t *testing.T) {
 	if err == nil {
 		t.Fatal("GenerateFile() succeeded, want simple chunk message validation error")
 	}
-	if !strings.Contains(err.Error(), "contain only bytes field") {
-		t.Fatalf("GenerateFile() error = %q, want simple chunk message validation failure", err)
+	if !strings.Contains(err.Error(), "contain only bytes field") || !strings.Contains(err.Error(), "got 2 fields") {
+		t.Fatalf("GenerateFile() error = %q, want simple chunk message validation failure with field count", err)
 	}
 }
 
@@ -133,34 +133,111 @@ func TestGenerateFileEmitsChunkedHelpersForValidStreamingMethods(t *testing.T) {
 		t.Fatalf("GenerateFile() error = %v", err)
 	}
 
-	files := gen.Response().File
-	if len(files) == 0 {
+	responseFiles := gen.Response().File
+	if len(responseFiles) == 0 {
 		t.Fatal("GenerateFile() produced no files")
 	}
 
-	var generated string
-	for _, f := range files {
-		if strings.HasSuffix(f.GetName(), "_nats.pb.go") && !strings.HasSuffix(f.GetName(), "shared_nats.pb.go") {
-			generated = f.GetContent()
+	// Collect generated file contents by suffix
+	fileContents := make(map[string]string)
+	for _, f := range responseFiles {
+		fileContents[f.GetName()] = f.GetContent()
+	}
+
+	// Find the main service file (not shared, not chunked)
+	var mainFile string
+	for name, content := range fileContents {
+		if strings.HasSuffix(name, "_nats.pb.go") &&
+			!strings.HasSuffix(name, "shared_nats.pb.go") &&
+			!strings.HasSuffix(name, "_chunked_nats.pb.go") &&
+			!strings.HasSuffix(name, "_chunked_protoopaque_nats.pb.go") {
+			mainFile = content
 			break
 		}
 	}
-	if generated == "" {
+	if mainFile == "" {
 		t.Fatal("failed to find generated Go service file")
 	}
 
-	wantSnippets := []string{
+	// Recv helpers should be in the main file
+	recvSnippets := []string{
 		"func (s *BlobService_Download_ClientStream) RecvBytes(ctx context.Context) ([]byte, error)",
 		"func (s *BlobService_Download_ClientStream) RecvToWriter(ctx context.Context, w io.Writer) error",
 		"func (s *BlobService_Download_ClientStream) RecvToFile(ctx context.Context, path string) error",
+	}
+	for _, snippet := range recvSnippets {
+		if !strings.Contains(mainFile, snippet) {
+			t.Errorf("main file missing recv snippet %q", snippet)
+		}
+	}
+
+	// RecvToFile should use writeFileAtomically (atomic write)
+	if !strings.Contains(mainFile, "writeFileAtomically") {
+		t.Error("RecvToFile should use writeFileAtomically for atomic writes")
+	}
+
+	// Send helpers should NOT be in the main file
+	sendSnippets := []string{"SendBytes", "SendReader", "SendFile"}
+	for _, snippet := range sendSnippets {
+		if strings.Contains(mainFile, "func (s *BlobService_Upload_ClientStream) "+snippet) {
+			t.Errorf("main file should not contain send helper %q (moved to build-tagged files)", snippet)
+		}
+	}
+
+	// Find the open-mode chunked send file
+	var chunkedFile string
+	for name, content := range fileContents {
+		if strings.HasSuffix(name, "_chunked_nats.pb.go") {
+			chunkedFile = content
+			break
+		}
+	}
+	if chunkedFile == "" {
+		t.Fatal("failed to find chunked send file (*_chunked_nats.pb.go)")
+	}
+
+	// Verify build tag
+	if !strings.Contains(chunkedFile, "!protoopaque") {
+		t.Error("chunked send file should have //go:build !protoopaque")
+	}
+
+	// Send helpers should be in the chunked file
+	openSendSnippets := []string{
 		"func (s *BlobService_Upload_ClientStream) SendBytes(data []byte) error",
 		"func (s *BlobService_Upload_ClientStream) SendReader(r io.Reader, chunkSize int) error",
 		"func (s *BlobService_Upload_ClientStream) SendFile(path string, chunkSize int) error",
 	}
-	for _, snippet := range wantSnippets {
-		if !strings.Contains(generated, snippet) {
-			t.Fatalf("generated Go output missing snippet %q\n%s", snippet, generated)
+	for _, snippet := range openSendSnippets {
+		if !strings.Contains(chunkedFile, snippet) {
+			t.Errorf("chunked file missing send snippet %q", snippet)
 		}
+	}
+
+	// Open-mode SendBytes should use struct literal
+	if !strings.Contains(chunkedFile, "SnapshotChunk{") {
+		t.Error("open-mode SendBytes should use struct literal construction")
+	}
+
+	// Find the opaque-mode chunked send file
+	var opaqueFile string
+	for name, content := range fileContents {
+		if strings.HasSuffix(name, "_chunked_protoopaque_nats.pb.go") {
+			opaqueFile = content
+			break
+		}
+	}
+	if opaqueFile == "" {
+		t.Fatal("failed to find opaque chunked send file (*_chunked_protoopaque_nats.pb.go)")
+	}
+
+	// Verify opaque build tag
+	if !strings.Contains(opaqueFile, "protoopaque") || strings.Contains(opaqueFile, "!protoopaque") {
+		t.Error("opaque chunked file should have //go:build protoopaque (without !)")
+	}
+
+	// Opaque-mode SendBytes should use setter
+	if !strings.Contains(opaqueFile, ".SetData(data)") {
+		t.Error("opaque-mode SendBytes should use .SetData() setter")
 	}
 }
 

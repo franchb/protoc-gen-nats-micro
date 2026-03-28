@@ -157,7 +157,7 @@ func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
         }
         return nil, fmt.Errorf("stream error [%s]: %s", status, desc)
       }
-      return nil, io.EOF
+      return nil, io.EOF // Normal end-of-stream
     }
     // Enforce ordering if requested
     if r.ordered {
@@ -175,13 +175,14 @@ func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
     }
     return msg, nil
   case <-r.done:
-    return nil, errors.New("stream closed")
+    return nil, errors.New("stream closed") // Caller-initiated closure via Close()
   case <-ctx.Done():
     return nil, ctx.Err()
   }
 }
 
-// Close unsubscribes from the stream
+// Close unsubscribes from the stream.
+// Returns "stream closed" on subsequent Recv calls (caller-initiated closure).
 func (r *ClientStreamReceiver) Close() error {
   var err error
   r.closeOnce.Do(func() {
@@ -189,6 +190,40 @@ func (r *ClientStreamReceiver) Close() error {
     err = r.sub.Unsubscribe()
   })
   return err
+}
+
+// writeFileAtomically writes content produced by fn to path atomically.
+// It creates a temp file in the same directory, calls fn, syncs, closes,
+// then renames to the target path. On any error the temp file is removed.
+func writeFileAtomically(path string, fn func(io.Writer) error) error {
+  dir := filepath.Dir(path)
+  tmp, err := os.CreateTemp(dir, ".tmp-*")
+  if err != nil {
+    return fmt.Errorf("failed to create temp file: %w", err)
+  }
+  tmpName := tmp.Name()
+  defer func() {
+    if tmpName != "" {
+      os.Remove(tmpName)
+    }
+  }()
+
+  if err := fn(tmp); err != nil {
+    tmp.Close()
+    return err
+  }
+  if err := tmp.Sync(); err != nil {
+    tmp.Close()
+    return fmt.Errorf("failed to sync temp file: %w", err)
+  }
+  if err := tmp.Close(); err != nil {
+    return fmt.Errorf("failed to close temp file: %w", err)
+  }
+  if err := os.Rename(tmpName, path); err != nil {
+    return fmt.Errorf("failed to rename temp file: %w", err)
+  }
+  tmpName = "" // prevent deferred cleanup
+  return nil
 }
 
 // Suppress unused import warnings

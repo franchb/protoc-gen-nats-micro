@@ -198,9 +198,24 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 			effectiveChunkSize = defaultChunkSize
 		}
 
+		// Resolve the Go field name from the actual protobuf descriptor
+		// rather than string-converting the proto field name.
+		var goFieldName string
+		if msg := chunkedIOMessage(method); msg != nil {
+			for _, f := range msg.Fields {
+				if string(f.Desc.Name()) == chunkField {
+					goFieldName = f.GoName
+					break
+				}
+			}
+		}
+		if goFieldName == "" {
+			goFieldName = fieldNameToGoGetter(chunkField) // fallback
+		}
+
 		opts.ChunkedIO = &ChunkedIOOpts{
 			ChunkField:       chunkField,
-			GoFieldName:      fieldNameToGoGetter(chunkField),
+			GoFieldName:      goFieldName,
 			DefaultChunkSize: effectiveChunkSize,
 		}
 	}
