@@ -10,7 +10,7 @@ Write standard `.proto` files, run `buf generate`, and get production-ready NATS
 - Type-safe request/response handling
 - Configurable timeouts, interceptors, and headers
 - Streaming RPC (server, client, bidirectional)
-- KV Store and Object Store auto-persistence
+- Go chunked blob helpers for stream-to-`io.Writer` and `io.Reader`-to-stream flows
 
 ## Prerequisites
 
@@ -42,7 +42,7 @@ Keep `import "natsmicro/options.proto"` in your proto files and run `buf generat
 | Service discovery      | Built-in via NATS        | Requires service mesh | Manual    |
 | Load balancing         | NATS queue groups        | External LB           | Manual    |
 | Streaming              | ✅ Server/Client/Bidi    | ✅ All patterns       | ❌ None   |
-| KV/Object auto-persist | ✅                       | ❌                    | ❌        |
+| Chunked blob helpers   | ✅ Go                    | ❌                    | ❌        |
 | Multi-language         | Go, TS, Python           | Many                  | Go only   |
 | Maintenance            | Active                   | Active                | Abandoned |
 | Framework              | Official `nats.io/micro` | gRPC                  | Custom    |
@@ -51,5 +51,4 @@ Keep `import "natsmicro/options.proto"` in your proto files and run `buf generat
 
 - [Quick Start →](/guide/quick-start) — Build your first service in 5 minutes
 - [Streaming RPC →](/guide/streaming) — Server, client, and bidi streaming
-- [KV & Object Store →](/guide/kv-object-store) — Auto-persist responses
 - [API Reference →](/api/reference) — All proto options

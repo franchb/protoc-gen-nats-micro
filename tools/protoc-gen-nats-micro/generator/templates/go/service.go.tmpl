@@ -116,45 +116,6 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		serviceTimeout: cfg.timeout,
 		useJSON:        {{.Options.UseJSON}},
 		interceptor:    chainedInterceptor,
-		js:             cfg.js,
-	}
-
-	// Auto-create KV and Object Store buckets if JetStream is available
-	if cfg.js != nil {
-		{{- range .Service.Methods}}
-		{{- $eopts := GetEndpointOptions .}}
-		{{- if $eopts.KVStore}}
-		// Auto-create KV bucket "{{$eopts.KVStore.Bucket}}" for {{.GoName}}
-		if _, err := cfg.js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
-			Bucket:      "{{$eopts.KVStore.Bucket}}",
-			{{- if $eopts.KVStore.Description}}
-			Description: "{{$eopts.KVStore.Description}}",
-			{{- end}}
-			{{- if $eopts.KVStore.MaxHistory}}
-			MaxHistory:  {{$eopts.KVStore.MaxHistory}},
-			{{- end}}
-			{{- if $eopts.KVStore.TTL.Nanoseconds}}
-			TTL:         {{$eopts.KVStore.TTL.Nanoseconds}} * time.Nanosecond,
-			{{- end}}
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create KV bucket \"{{$eopts.KVStore.Bucket}}\": %v\n", err)
-		}
-		{{- end}}
-		{{- if $eopts.ObjectStore}}
-		// Auto-create Object Store bucket "{{$eopts.ObjectStore.Bucket}}" for {{.GoName}}
-		if _, err := cfg.js.CreateOrUpdateObjectStore(context.Background(), jetstream.ObjectStoreConfig{
-			Bucket:      "{{$eopts.ObjectStore.Bucket}}",
-			{{- if $eopts.ObjectStore.Description}}
-			Description: "{{$eopts.ObjectStore.Description}}",
-			{{- end}}
-			{{- if $eopts.ObjectStore.TTL.Nanoseconds}}
-			TTL:         {{$eopts.ObjectStore.TTL.Nanoseconds}} * time.Nanosecond,
-			{{- end}}
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create Object Store bucket \"{{$eopts.ObjectStore.Bucket}}\": %v\n", err)
-		}
-		{{- end}}
-		{{- end}}
 	}
 
 	// Map of endpoint names to their handlers
@@ -181,6 +142,25 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 {{end -}}
 	}
 
+	type endpointRegistrationConfig struct {
+		queueGroupDisabled bool
+		pendingMsgLimit    int
+		pendingBytesLimit  int
+	}
+
+	endpointRegistrationConfigs := map[string]endpointRegistrationConfig{
+{{range .Service.Methods -}}
+{{- $endpointOpts := GetEndpointOptions .}}
+{{- if not $endpointOpts.Skip}}
+		"{{ToSnakeCase .GoName}}": {
+			queueGroupDisabled: {{if $endpointOpts.QueueGroupDisabled}}true{{else}}false{{end}},
+			pendingMsgLimit:    {{printf "%d" $endpointOpts.PendingMsgLimit}},
+			pendingBytesLimit:  {{printf "%d" $endpointOpts.PendingBytesLimit}},
+		},
+{{end -}}
+{{end -}}
+	}
+
 	// Use interface to handle both Service and Group
 	type endpointAdder interface {
 		AddEndpoint(string, micro.Handler, ...micro.EndpointOpt) error
@@ -188,7 +168,11 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 
 	var adder endpointAdder = svc
 	if cfg.subjectPrefix != "" {
-		adder = svc.AddGroup(cfg.subjectPrefix)
+		groupOpts := []micro.GroupOpt{}
+		{{- if .Options.QueueGroupDisabled}}
+		groupOpts = append(groupOpts, micro.WithGroupQueueGroupDisabled())
+		{{- end}}
+		adder = svc.AddGroup(cfg.subjectPrefix, groupOpts...)
 	}
 
 	// Register all endpoints with their metadata
@@ -196,6 +180,14 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		opts := []micro.EndpointOpt{}
 		if metadata, exists := endpointMetadata[name]; exists && len(metadata) > 0 {
 			opts = append(opts, micro.WithEndpointMetadata(metadata))
+		}
+		if regCfg, exists := endpointRegistrationConfigs[name]; exists {
+			if regCfg.queueGroupDisabled {
+				opts = append(opts, micro.WithEndpointQueueGroupDisabled())
+			}
+			if regCfg.pendingMsgLimit != 0 || regCfg.pendingBytesLimit != 0 {
+				opts = append(opts, micro.WithEndpointPendingLimits(regCfg.pendingMsgLimit, regCfg.pendingBytesLimit))
+			}
 		}
 		if err := adder.AddEndpoint(name, handler, opts...); err != nil {
 			return nil, fmt.Errorf("failed to add endpoint %s: %w", name, err)
@@ -215,7 +207,6 @@ type {{ToLowerFirst .Service.GoName}}Handlers struct {
 	serviceTimeout time.Duration              // Default timeout for all endpoints
 	useJSON        bool                       // Use JSON encoding instead of binary protobuf
 	interceptor    UnaryServerInterceptor     // Chained interceptors
-	js             jetstream.JetStream        // Optional JetStream context for KV/ObjectStore
 }
 
 {{range .Service.Methods -}}
@@ -333,42 +324,6 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	if headersPtr, ok := ctx.Value(outgoingHeadersKey).(*nats.Header); ok && headersPtr != nil {
 		outgoingHeaders = *headersPtr
 	}
-
-	{{- /* KV Store persistence: auto-persist response after successful RPC */}}
-	{{- if $endpointOpts.KVStore}}
-	{{- if not $endpointOpts.KVStore.ClientOnly}}
-	// Auto-persist response to KV Store (bucket: "{{$endpointOpts.KVStore.Bucket}}")
-	if h.js != nil {
-		kvKey := {{ResolveKeyTemplateGo $endpointOpts.KVStore.KeyTemplate .}}
-		kv, kvErr := h.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
-		if kvErr != nil {
-			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: KV bucket \"{{$endpointOpts.KVStore.Bucket}}\" not available for {{.GoName}}: %v\n", kvErr)
-		} else {
-			if _, kvErr = kv.Put(ctx, kvKey, data); kvErr != nil {
-				fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to persist {{.GoName}} response to KV: %v\n", kvErr)
-			}
-		}
-	}
-	{{- end}}
-	{{- end}}
-
-	{{- /* Object Store persistence: auto-persist response to Object Store */}}
-	{{- if $endpointOpts.ObjectStore}}
-	{{- if not $endpointOpts.ObjectStore.ClientOnly}}
-	// Auto-persist response to Object Store (bucket: "{{$endpointOpts.ObjectStore.Bucket}}")
-	if h.js != nil {
-		objKey := {{ResolveKeyTemplateGo $endpointOpts.ObjectStore.KeyTemplate .}}
-		obj, objErr := h.js.ObjectStore(ctx, "{{$endpointOpts.ObjectStore.Bucket}}")
-		if objErr != nil {
-			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: Object Store bucket \"{{$endpointOpts.ObjectStore.Bucket}}\" not available for {{.GoName}}: %v\n", objErr)
-		} else {
-			if _, objErr = obj.PutBytes(ctx, objKey, data); objErr != nil {
-				fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to persist {{.GoName}} response to Object Store: %v\n", objErr)
-			}
-		}
-	}
-	{{- end}}
-	{{- end}}
 
 	if len(outgoingHeaders) > 0 {
 		// Send response with headers using micro.WithHeaders

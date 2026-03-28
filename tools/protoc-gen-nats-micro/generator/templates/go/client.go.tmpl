@@ -7,14 +7,6 @@ type {{.Service.GoName}}NatsClientInterface interface {
 {{- if not $endpointOpts.Skip}}
 {{- if IsUnary .}}
   {{.GoName}}(context.Context, *{{.Input.GoIdent.GoName}}) (*{{.Output.GoIdent.GoName}}, error)
-{{- if $endpointOpts.KVStore}}
-  Get{{.GoName}}FromKV(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error)
-  Put{{.GoName}}ToKV(ctx context.Context, key string, val *{{.Output.GoIdent.GoName}}) error
-{{- end}}
-{{- if $endpointOpts.ObjectStore}}
-  Get{{.GoName}}FromObjectStore(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error)
-  Put{{.GoName}}ToObjectStore(ctx context.Context, key string, val *{{.Output.GoIdent.GoName}}) error
-{{- end}}
 {{- else if IsServerStreaming .}}
 {{- if not (IsClientStreaming .)}}
   {{.GoName}}(ctx context.Context, req *{{.Input.GoIdent.GoName}}) (*{{$.Service.GoName}}_{{.GoName}}_ClientStream, error)
@@ -39,7 +31,6 @@ type {{.Service.GoName}}NatsClient struct {
   subjectPrefix string
   useJSON       bool                       // Use JSON encoding instead of binary protobuf
   interceptor   UnaryClientInterceptor     // Chained interceptors
-  js            jetstream.JetStream        // Optional JetStream for KV/ObjectStore reads
 }
 
 // New{{.Service.GoName}}NatsClient creates a new NATS client for {{.Service.GoName}}.
@@ -63,7 +54,6 @@ func New{{.Service.GoName}}NatsClient(nc *nats.Conn, opts ...NatsClientOption) {
     subjectPrefix: cfg.subjectPrefix,
     useJSON:       {{.Options.UseJSON}},
     interceptor:   chainedInterceptor,
-    js:            cfg.js,
   }
   return c
 }
@@ -166,121 +156,6 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{
 
   return &resp, nil
 }
-
-{{- if $endpointOpts.KVStore}}
-
-// Get{{.GoName}}FromKV reads a {{.GoName}} response directly from the KV Store.
-// The key should match the key_template pattern used when the response was persisted.
-// Requires the client to be created with WithNatsClientJetStream.
-func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromKV(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error) {
-  if c.js == nil {
-    return nil, errors.New("JetStream not configured; use WithNatsClientJetStream to enable KV reads")
-  }
-  kv, err := c.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
-  if err != nil {
-    return nil, fmt.Errorf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %w", err)
-  }
-  entry, err := kv.Get(ctx, key)
-  if err != nil {
-    return nil, fmt.Errorf("KV get failed for key %q: %w", key, err)
-  }
-  var resp {{.Output.GoIdent.GoName}}
-  if c.useJSON {
-    if err := protojson.Unmarshal(entry.Value(), &resp); err != nil {
-      return nil, fmt.Errorf("failed to decode KV value: %w", err)
-    }
-  } else {
-    if err := proto.Unmarshal(entry.Value(), &resp); err != nil {
-      return nil, fmt.Errorf("failed to decode KV value: %w", err)
-    }
-  }
-  return &resp, nil
-}
-
-// Put{{.GoName}}ToKV writes a {{.Output.GoIdent.GoName}} directly to the KV Store.
-// Requires the client to be created with WithNatsClientJetStream.
-func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToKV(ctx context.Context, key string, val *{{.Output.GoIdent.GoName}}) error {
-  if c.js == nil {
-    return errors.New("JetStream not configured; use WithNatsClientJetStream to enable KV writes")
-  }
-  var data []byte
-  var err error
-  if c.useJSON {
-    data, err = protojson.Marshal(val)
-  } else {
-    data, err = proto.Marshal(val)
-  }
-  if err != nil {
-    return fmt.Errorf("failed to encode value: %w", err)
-  }
-  kv, err := c.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
-  if err != nil {
-    return fmt.Errorf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %w", err)
-  }
-  if _, err := kv.Put(ctx, key, data); err != nil {
-    return fmt.Errorf("KV put failed for key %q: %w", key, err)
-  }
-  return nil
-}
-{{- end}}
-
-{{- if $endpointOpts.ObjectStore}}
-
-// Get{{.GoName}}FromObjectStore reads a {{.GoName}} response directly from the Object Store.
-// The key should match the key_template pattern used when the response was persisted.
-// Requires the client to be created with WithNatsClientJetStream.
-func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromObjectStore(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error) {
-  if c.js == nil {
-    return nil, errors.New("JetStream not configured; use WithNatsClientJetStream to enable Object Store reads")
-  }
-  obj, err := c.js.ObjectStore(ctx, "{{$endpointOpts.ObjectStore.Bucket}}")
-  if err != nil {
-    return nil, fmt.Errorf("failed to open Object Store bucket \"{{$endpointOpts.ObjectStore.Bucket}}\": %w", err)
-  }
-  data, err := obj.GetBytes(ctx, key)
-  if err != nil {
-    return nil, fmt.Errorf("Object Store get failed for key %q: %w", key, err)
-  }
-  var resp {{.Output.GoIdent.GoName}}
-  if c.useJSON {
-    if err := protojson.Unmarshal(data, &resp); err != nil {
-      return nil, fmt.Errorf("failed to decode Object Store value: %w", err)
-    }
-  } else {
-    if err := proto.Unmarshal(data, &resp); err != nil {
-      return nil, fmt.Errorf("failed to decode Object Store value: %w", err)
-    }
-  }
-  return &resp, nil
-}
-
-// Put{{.GoName}}ToObjectStore writes a {{.Output.GoIdent.GoName}} directly to the Object Store.
-// Requires the client to be created with WithNatsClientJetStream.
-func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToObjectStore(ctx context.Context, key string, val *{{.Output.GoIdent.GoName}}) error {
-  if c.js == nil {
-    return errors.New("JetStream not configured; use WithNatsClientJetStream to enable Object Store writes")
-  }
-  var data []byte
-  var err error
-  if c.useJSON {
-    data, err = protojson.Marshal(val)
-  } else {
-    data, err = proto.Marshal(val)
-  }
-  if err != nil {
-    return fmt.Errorf("failed to encode value: %w", err)
-  }
-  obj, err := c.js.ObjectStore(ctx, "{{$endpointOpts.ObjectStore.Bucket}}")
-  if err != nil {
-    return fmt.Errorf("failed to open Object Store bucket \"{{$endpointOpts.ObjectStore.Bucket}}\": %w", err)
-  }
-  if _, err := obj.PutBytes(ctx, key, data); err != nil {
-    return fmt.Errorf("Object Store put failed for key %q: %w", key, err)
-  }
-  return nil
-}
-{{- end}}
-
 {{- end}}{{/* end IsUnary */}}
 
 {{- if IsServerStreaming .}}

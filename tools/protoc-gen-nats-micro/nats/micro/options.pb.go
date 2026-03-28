@@ -52,9 +52,13 @@ type ServiceOptions struct {
 	// "PAYMENT_FAILED") These are generated as additional constants,
 	// constructors, and checkers alongside the 7 built-in error codes
 	// (INVALID_ARGUMENT, NOT_FOUND, etc.)
-	ErrorCodes    []string `protobuf:"bytes,9,rep,name=error_codes,json=errorCodes,proto3" json:"error_codes,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ErrorCodes []string `protobuf:"bytes,9,rep,name=error_codes,json=errorCodes,proto3" json:"error_codes,omitempty"`
+	// Disable queue subscriptions for this service's grouped endpoints.
+	// When true, the generated service registers plain subscriptions instead of
+	// queue subscriptions.
+	QueueGroupDisabled bool `protobuf:"varint,10,opt,name=queue_group_disabled,json=queueGroupDisabled,proto3" json:"queue_group_disabled,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ServiceOptions) Reset() {
@@ -150,6 +154,13 @@ func (x *ServiceOptions) GetErrorCodes() []string {
 	return nil
 }
 
+func (x *ServiceOptions) GetQueueGroupDisabled() bool {
+	if x != nil {
+		return x.QueueGroupDisabled
+	}
+	return false
+}
+
 // Endpoint-level options for individual RPC methods
 type EndpointOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -161,9 +172,17 @@ type EndpointOptions struct {
 	Skip bool `protobuf:"varint,2,opt,name=skip,proto3" json:"skip,omitempty"`
 	// Endpoint metadata (optional, key-value pairs for endpoint-specific
 	// metadata) This metadata is passed to the NATS micro endpoint registration
-	Metadata      map[string]string `protobuf:"bytes,3,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Metadata map[string]string `protobuf:"bytes,3,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Disable queue subscriptions for this endpoint.
+	QueueGroupDisabled bool `protobuf:"varint,4,opt,name=queue_group_disabled,json=queueGroupDisabled,proto3" json:"queue_group_disabled,omitempty"`
+	// Subscription pending message limit for this endpoint.
+	// Use -1 for no limit, 0 to keep the library default.
+	PendingMsgLimit int32 `protobuf:"varint,5,opt,name=pending_msg_limit,json=pendingMsgLimit,proto3" json:"pending_msg_limit,omitempty"`
+	// Subscription pending byte limit for this endpoint.
+	// Use -1 for no limit, 0 to keep the library default.
+	PendingBytesLimit int32 `protobuf:"varint,6,opt,name=pending_bytes_limit,json=pendingBytesLimit,proto3" json:"pending_bytes_limit,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *EndpointOptions) Reset() {
@@ -217,188 +236,25 @@ func (x *EndpointOptions) GetMetadata() map[string]string {
 	return nil
 }
 
-// KV Store options for RPC methods
-// When set, the server handler automatically persists the response
-// into a NATS JetStream KV bucket after processing.
-// The bucket is auto-created during service registration if it doesn't exist.
-type KVStoreOptions struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// KV bucket name (e.g., "user_profiles")
-	Bucket string `protobuf:"bytes,1,opt,name=bucket,proto3" json:"bucket,omitempty"`
-	// Key template with {field} placeholders resolved from the request message
-	// e.g., "user.{id}" extracts the 'id' field from the request
-	KeyTemplate string `protobuf:"bytes,2,opt,name=key_template,json=keyTemplate,proto3" json:"key_template,omitempty"`
-	// TTL for entries — auto-expire cached data after this duration (optional)
-	Ttl *durationpb.Duration `protobuf:"bytes,3,opt,name=ttl,proto3" json:"ttl,omitempty"`
-	// Human-readable description for the bucket (optional)
-	Description string `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
-	// Number of revisions to keep per key (optional, default 1, max 64)
-	// Set > 1 to enable revision history for audit trails or versioned data
-	MaxHistory int32 `protobuf:"varint,5,opt,name=max_history,json=maxHistory,proto3" json:"max_history,omitempty"`
-	// If true, skip server-side auto-persist — only generate client read/write
-	// methods Use this when you want direct client access to KV without RPC
-	// involvement
-	ClientOnly    bool `protobuf:"varint,6,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *KVStoreOptions) Reset() {
-	*x = KVStoreOptions{}
-	mi := &file_natsmicro_options_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *KVStoreOptions) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*KVStoreOptions) ProtoMessage() {}
-
-func (x *KVStoreOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_natsmicro_options_proto_msgTypes[2]
+func (x *EndpointOptions) GetQueueGroupDisabled() bool {
 	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
+		return x.QueueGroupDisabled
 	}
-	return mi.MessageOf(x)
+	return false
 }
 
-// Deprecated: Use KVStoreOptions.ProtoReflect.Descriptor instead.
-func (*KVStoreOptions) Descriptor() ([]byte, []int) {
-	return file_natsmicro_options_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *KVStoreOptions) GetBucket() string {
+func (x *EndpointOptions) GetPendingMsgLimit() int32 {
 	if x != nil {
-		return x.Bucket
-	}
-	return ""
-}
-
-func (x *KVStoreOptions) GetKeyTemplate() string {
-	if x != nil {
-		return x.KeyTemplate
-	}
-	return ""
-}
-
-func (x *KVStoreOptions) GetTtl() *durationpb.Duration {
-	if x != nil {
-		return x.Ttl
-	}
-	return nil
-}
-
-func (x *KVStoreOptions) GetDescription() string {
-	if x != nil {
-		return x.Description
-	}
-	return ""
-}
-
-func (x *KVStoreOptions) GetMaxHistory() int32 {
-	if x != nil {
-		return x.MaxHistory
+		return x.PendingMsgLimit
 	}
 	return 0
 }
 
-func (x *KVStoreOptions) GetClientOnly() bool {
+func (x *EndpointOptions) GetPendingBytesLimit() int32 {
 	if x != nil {
-		return x.ClientOnly
+		return x.PendingBytesLimit
 	}
-	return false
-}
-
-// Object Store options for RPC methods
-// When set, the handler stores/retrieves large binary objects
-// from a NATS JetStream Object Store bucket.
-// The bucket is auto-created during service registration if it doesn't exist.
-type ObjectStoreOptions struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// Object store bucket name (e.g., "firmware_binaries")
-	Bucket string `protobuf:"bytes,1,opt,name=bucket,proto3" json:"bucket,omitempty"`
-	// Key template with {field} placeholders (optional, defaults to method name)
-	KeyTemplate string `protobuf:"bytes,2,opt,name=key_template,json=keyTemplate,proto3" json:"key_template,omitempty"`
-	// TTL for objects — auto-expire after this duration (optional)
-	Ttl *durationpb.Duration `protobuf:"bytes,3,opt,name=ttl,proto3" json:"ttl,omitempty"`
-	// Human-readable description for the bucket (optional)
-	Description string `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
-	// If true, skip server-side auto-persist — only generate client read/write
-	// methods
-	ClientOnly    bool `protobuf:"varint,5,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ObjectStoreOptions) Reset() {
-	*x = ObjectStoreOptions{}
-	mi := &file_natsmicro_options_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ObjectStoreOptions) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ObjectStoreOptions) ProtoMessage() {}
-
-func (x *ObjectStoreOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_natsmicro_options_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ObjectStoreOptions.ProtoReflect.Descriptor instead.
-func (*ObjectStoreOptions) Descriptor() ([]byte, []int) {
-	return file_natsmicro_options_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *ObjectStoreOptions) GetBucket() string {
-	if x != nil {
-		return x.Bucket
-	}
-	return ""
-}
-
-func (x *ObjectStoreOptions) GetKeyTemplate() string {
-	if x != nil {
-		return x.KeyTemplate
-	}
-	return ""
-}
-
-func (x *ObjectStoreOptions) GetTtl() *durationpb.Duration {
-	if x != nil {
-		return x.Ttl
-	}
-	return nil
-}
-
-func (x *ObjectStoreOptions) GetDescription() string {
-	if x != nil {
-		return x.Description
-	}
-	return ""
-}
-
-func (x *ObjectStoreOptions) GetClientOnly() bool {
-	if x != nil {
-		return x.ClientOnly
-	}
-	return false
+	return 0
 }
 
 // Streaming options for fine-tuning streaming RPC behavior
@@ -414,7 +270,7 @@ type StreamOptions struct {
 
 func (x *StreamOptions) Reset() {
 	*x = StreamOptions{}
-	mi := &file_natsmicro_options_proto_msgTypes[4]
+	mi := &file_natsmicro_options_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -426,7 +282,7 @@ func (x *StreamOptions) String() string {
 func (*StreamOptions) ProtoMessage() {}
 
 func (x *StreamOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_natsmicro_options_proto_msgTypes[4]
+	mi := &file_natsmicro_options_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -439,7 +295,7 @@ func (x *StreamOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamOptions.ProtoReflect.Descriptor instead.
 func (*StreamOptions) Descriptor() ([]byte, []int) {
-	return file_natsmicro_options_proto_rawDescGZIP(), []int{4}
+	return file_natsmicro_options_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *StreamOptions) GetMaxInflight() int32 {
@@ -471,7 +327,7 @@ type ChunkedIOOptions struct {
 
 func (x *ChunkedIOOptions) Reset() {
 	*x = ChunkedIOOptions{}
-	mi := &file_natsmicro_options_proto_msgTypes[5]
+	mi := &file_natsmicro_options_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -483,7 +339,7 @@ func (x *ChunkedIOOptions) String() string {
 func (*ChunkedIOOptions) ProtoMessage() {}
 
 func (x *ChunkedIOOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_natsmicro_options_proto_msgTypes[5]
+	mi := &file_natsmicro_options_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -496,7 +352,7 @@ func (x *ChunkedIOOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChunkedIOOptions.ProtoReflect.Descriptor instead.
 func (*ChunkedIOOptions) Descriptor() ([]byte, []int) {
-	return file_natsmicro_options_proto_rawDescGZIP(), []int{5}
+	return file_natsmicro_options_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ChunkedIOOptions) GetChunkField() string {
@@ -532,22 +388,6 @@ var file_natsmicro_options_proto_extTypes = []protoimpl.ExtensionInfo{
 	},
 	{
 		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
-		ExtensionType: (*KVStoreOptions)(nil),
-		Field:         50003,
-		Name:          "natsmicro.kv_store",
-		Tag:           "bytes,50003,opt,name=kv_store",
-		Filename:      "natsmicro/options.proto",
-	},
-	{
-		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
-		ExtensionType: (*ObjectStoreOptions)(nil),
-		Field:         50004,
-		Name:          "natsmicro.object_store",
-		Tag:           "bytes,50004,opt,name=object_store",
-		Filename:      "natsmicro/options.proto",
-	},
-	{
-		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
 		ExtensionType: (*StreamOptions)(nil),
 		Field:         50005,
 		Name:          "natsmicro.stream",
@@ -574,21 +414,17 @@ var (
 var (
 	// optional natsmicro.EndpointOptions endpoint = 50002;
 	E_Endpoint = &file_natsmicro_options_proto_extTypes[1]
-	// optional natsmicro.KVStoreOptions kv_store = 50003;
-	E_KvStore = &file_natsmicro_options_proto_extTypes[2]
-	// optional natsmicro.ObjectStoreOptions object_store = 50004;
-	E_ObjectStore = &file_natsmicro_options_proto_extTypes[3]
 	// optional natsmicro.StreamOptions stream = 50005;
-	E_Stream = &file_natsmicro_options_proto_extTypes[4]
+	E_Stream = &file_natsmicro_options_proto_extTypes[2]
 	// optional natsmicro.ChunkedIOOptions chunked_io = 50006;
-	E_ChunkedIo = &file_natsmicro_options_proto_extTypes[5]
+	E_ChunkedIo = &file_natsmicro_options_proto_extTypes[3]
 )
 
 var File_natsmicro_options_proto protoreflect.FileDescriptor
 
 const file_natsmicro_options_proto_rawDesc = "" +
 	"\n" +
-	"\x17natsmicro/options.proto\x12\tnatsmicro\x1a google/protobuf/descriptor.proto\x1a\x1egoogle/protobuf/duration.proto\"\x87\x03\n" +
+	"\x17natsmicro/options.proto\x12\tnatsmicro\x1a google/protobuf/descriptor.proto\x1a\x1egoogle/protobuf/duration.proto\"\xb9\x03\n" +
 	"\x0eServiceOptions\x12%\n" +
 	"\x0esubject_prefix\x18\x01 \x01(\tR\rsubjectPrefix\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -599,33 +435,22 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	"\x04skip\x18\a \x01(\bR\x04skip\x12\x12\n" +
 	"\x04json\x18\b \x01(\bR\x04json\x12\x1f\n" +
 	"\verror_codes\x18\t \x03(\tR\n" +
-	"errorCodes\x1a;\n" +
+	"errorCodes\x120\n" +
+	"\x14queue_group_disabled\x18\n" +
+	" \x01(\bR\x12queueGroupDisabled\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdd\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xeb\x02\n" +
 	"\x0fEndpointOptions\x123\n" +
 	"\atimeout\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x12\n" +
 	"\x04skip\x18\x02 \x01(\bR\x04skip\x12D\n" +
-	"\bmetadata\x18\x03 \x03(\v2(.natsmicro.EndpointOptions.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\x03 \x03(\v2(.natsmicro.EndpointOptions.MetadataEntryR\bmetadata\x120\n" +
+	"\x14queue_group_disabled\x18\x04 \x01(\bR\x12queueGroupDisabled\x12*\n" +
+	"\x11pending_msg_limit\x18\x05 \x01(\x05R\x0fpendingMsgLimit\x12.\n" +
+	"\x13pending_bytes_limit\x18\x06 \x01(\x05R\x11pendingBytesLimit\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdc\x01\n" +
-	"\x0eKVStoreOptions\x12\x16\n" +
-	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12!\n" +
-	"\fkey_template\x18\x02 \x01(\tR\vkeyTemplate\x12+\n" +
-	"\x03ttl\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x03ttl\x12 \n" +
-	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1f\n" +
-	"\vmax_history\x18\x05 \x01(\x05R\n" +
-	"maxHistory\x12\x1f\n" +
-	"\vclient_only\x18\x06 \x01(\bR\n" +
-	"clientOnly\"\xbf\x01\n" +
-	"\x12ObjectStoreOptions\x12\x16\n" +
-	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12!\n" +
-	"\fkey_template\x18\x02 \x01(\tR\vkeyTemplate\x12+\n" +
-	"\x03ttl\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x03ttl\x12 \n" +
-	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1f\n" +
-	"\vclient_only\x18\x05 \x01(\bR\n" +
-	"clientOnly\"L\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"L\n" +
 	"\rStreamOptions\x12!\n" +
 	"\fmax_inflight\x18\x01 \x01(\x05R\vmaxInflight\x12\x18\n" +
 	"\aordered\x18\x02 \x01(\bR\aordered\"a\n" +
@@ -634,9 +459,7 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	"chunkField\x12,\n" +
 	"\x12default_chunk_size\x18\x02 \x01(\x05R\x10defaultChunkSize:V\n" +
 	"\aservice\x12\x1f.google.protobuf.ServiceOptions\x18ц\x03 \x01(\v2\x19.natsmicro.ServiceOptionsR\aservice:X\n" +
-	"\bendpoint\x12\x1e.google.protobuf.MethodOptions\x18҆\x03 \x01(\v2\x1a.natsmicro.EndpointOptionsR\bendpoint:V\n" +
-	"\bkv_store\x12\x1e.google.protobuf.MethodOptions\x18ӆ\x03 \x01(\v2\x19.natsmicro.KVStoreOptionsR\akvStore:b\n" +
-	"\fobject_store\x12\x1e.google.protobuf.MethodOptions\x18Ԇ\x03 \x01(\v2\x1d.natsmicro.ObjectStoreOptionsR\vobjectStore:R\n" +
+	"\bendpoint\x12\x1e.google.protobuf.MethodOptions\x18҆\x03 \x01(\v2\x1a.natsmicro.EndpointOptionsR\bendpoint:R\n" +
 	"\x06stream\x12\x1e.google.protobuf.MethodOptions\x18Ն\x03 \x01(\v2\x18.natsmicro.StreamOptionsR\x06stream:\\\n" +
 	"\n" +
 	"chunked_io\x12\x1e.google.protobuf.MethodOptions\x18ֆ\x03 \x01(\v2\x1b.natsmicro.ChunkedIOOptionsR\tchunkedIoB9Z7github.com/franchb/protoc-gen-nats-micro/gen/nats/microb\x06proto3"
@@ -653,44 +476,36 @@ func file_natsmicro_options_proto_rawDescGZIP() []byte {
 	return file_natsmicro_options_proto_rawDescData
 }
 
-var file_natsmicro_options_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_natsmicro_options_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_natsmicro_options_proto_goTypes = []any{
 	(*ServiceOptions)(nil),              // 0: natsmicro.ServiceOptions
 	(*EndpointOptions)(nil),             // 1: natsmicro.EndpointOptions
-	(*KVStoreOptions)(nil),              // 2: natsmicro.KVStoreOptions
-	(*ObjectStoreOptions)(nil),          // 3: natsmicro.ObjectStoreOptions
-	(*StreamOptions)(nil),               // 4: natsmicro.StreamOptions
-	(*ChunkedIOOptions)(nil),            // 5: natsmicro.ChunkedIOOptions
-	nil,                                 // 6: natsmicro.ServiceOptions.MetadataEntry
-	nil,                                 // 7: natsmicro.EndpointOptions.MetadataEntry
-	(*durationpb.Duration)(nil),         // 8: google.protobuf.Duration
-	(*descriptorpb.ServiceOptions)(nil), // 9: google.protobuf.ServiceOptions
-	(*descriptorpb.MethodOptions)(nil),  // 10: google.protobuf.MethodOptions
+	(*StreamOptions)(nil),               // 2: natsmicro.StreamOptions
+	(*ChunkedIOOptions)(nil),            // 3: natsmicro.ChunkedIOOptions
+	nil,                                 // 4: natsmicro.ServiceOptions.MetadataEntry
+	nil,                                 // 5: natsmicro.EndpointOptions.MetadataEntry
+	(*durationpb.Duration)(nil),         // 6: google.protobuf.Duration
+	(*descriptorpb.ServiceOptions)(nil), // 7: google.protobuf.ServiceOptions
+	(*descriptorpb.MethodOptions)(nil),  // 8: google.protobuf.MethodOptions
 }
 var file_natsmicro_options_proto_depIdxs = []int32{
-	6,  // 0: natsmicro.ServiceOptions.metadata:type_name -> natsmicro.ServiceOptions.MetadataEntry
-	8,  // 1: natsmicro.ServiceOptions.timeout:type_name -> google.protobuf.Duration
-	8,  // 2: natsmicro.EndpointOptions.timeout:type_name -> google.protobuf.Duration
-	7,  // 3: natsmicro.EndpointOptions.metadata:type_name -> natsmicro.EndpointOptions.MetadataEntry
-	8,  // 4: natsmicro.KVStoreOptions.ttl:type_name -> google.protobuf.Duration
-	8,  // 5: natsmicro.ObjectStoreOptions.ttl:type_name -> google.protobuf.Duration
-	9,  // 6: natsmicro.service:extendee -> google.protobuf.ServiceOptions
-	10, // 7: natsmicro.endpoint:extendee -> google.protobuf.MethodOptions
-	10, // 8: natsmicro.kv_store:extendee -> google.protobuf.MethodOptions
-	10, // 9: natsmicro.object_store:extendee -> google.protobuf.MethodOptions
-	10, // 10: natsmicro.stream:extendee -> google.protobuf.MethodOptions
-	10, // 11: natsmicro.chunked_io:extendee -> google.protobuf.MethodOptions
-	0,  // 12: natsmicro.service:type_name -> natsmicro.ServiceOptions
-	1,  // 13: natsmicro.endpoint:type_name -> natsmicro.EndpointOptions
-	2,  // 14: natsmicro.kv_store:type_name -> natsmicro.KVStoreOptions
-	3,  // 15: natsmicro.object_store:type_name -> natsmicro.ObjectStoreOptions
-	4,  // 16: natsmicro.stream:type_name -> natsmicro.StreamOptions
-	5,  // 17: natsmicro.chunked_io:type_name -> natsmicro.ChunkedIOOptions
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	12, // [12:18] is the sub-list for extension type_name
-	6,  // [6:12] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	4,  // 0: natsmicro.ServiceOptions.metadata:type_name -> natsmicro.ServiceOptions.MetadataEntry
+	6,  // 1: natsmicro.ServiceOptions.timeout:type_name -> google.protobuf.Duration
+	6,  // 2: natsmicro.EndpointOptions.timeout:type_name -> google.protobuf.Duration
+	5,  // 3: natsmicro.EndpointOptions.metadata:type_name -> natsmicro.EndpointOptions.MetadataEntry
+	7,  // 4: natsmicro.service:extendee -> google.protobuf.ServiceOptions
+	8,  // 5: natsmicro.endpoint:extendee -> google.protobuf.MethodOptions
+	8,  // 6: natsmicro.stream:extendee -> google.protobuf.MethodOptions
+	8,  // 7: natsmicro.chunked_io:extendee -> google.protobuf.MethodOptions
+	0,  // 8: natsmicro.service:type_name -> natsmicro.ServiceOptions
+	1,  // 9: natsmicro.endpoint:type_name -> natsmicro.EndpointOptions
+	2,  // 10: natsmicro.stream:type_name -> natsmicro.StreamOptions
+	3,  // 11: natsmicro.chunked_io:type_name -> natsmicro.ChunkedIOOptions
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	8,  // [8:12] is the sub-list for extension type_name
+	4,  // [4:8] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_natsmicro_options_proto_init() }
@@ -704,8 +519,8 @@ func file_natsmicro_options_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_natsmicro_options_proto_rawDesc), len(file_natsmicro_options_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
-			NumExtensions: 6,
+			NumMessages:   6,
+			NumExtensions: 4,
 			NumServices:   0,
 		},
 		GoTypes:           file_natsmicro_options_proto_goTypes,

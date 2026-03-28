@@ -4,10 +4,18 @@ package v1
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"sync"
 	"time"
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
 	"github.com/nats-io/nats.go/micro"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // Common error codes used across all NATS microservices
@@ -123,7 +131,6 @@ type registerConfig struct {
 	doneHandler        micro.DoneHandler
 	errorHandler       micro.ErrHandler
 	serverInterceptors []UnaryServerInterceptor
-	js                 jetstream.JetStream // Optional JetStream context for KV/ObjectStore
 }
 
 // RegisterOption configures the service registration
@@ -191,13 +198,6 @@ func WithErrorHandler(handler micro.ErrHandler) RegisterOption {
 	return func(c *registerConfig) { c.errorHandler = handler }
 }
 
-// WithJetStream provides a JetStream context for KV/ObjectStore operations.
-// Required only if any methods use (natsmicro.kv_store) or (natsmicro.object_store) options.
-// If not provided, KV/ObjectStore operations will be silently skipped.
-func WithJetStream(js jetstream.JetStream) RegisterOption {
-	return func(c *registerConfig) { c.js = js }
-}
-
 // WithServerInterceptor adds a unary server interceptor to the service.
 // Interceptors are executed in the order they are added.
 // Use for cross-cutting concerns like logging, auth, metrics, tracing.
@@ -237,7 +237,6 @@ func chainUnaryServerInterceptors(interceptors []UnaryServerInterceptor) UnarySe
 type natsClientConfig struct {
 	subjectPrefix      string
 	clientInterceptors []UnaryClientInterceptor
-	js                 jetstream.JetStream // Optional JetStream for KV/ObjectStore reads
 }
 
 // NatsClientOption is a generic client configuration option
@@ -270,14 +269,6 @@ func WithClientInterceptor(interceptor UnaryClientInterceptor) NatsClientOption 
 	})
 }
 
-// WithNatsClientJetStream provides a JetStream context for client-side KV/ObjectStore reads.
-// Required only if using Get*FromKV or Get*FromObjectStore convenience methods.
-func WithNatsClientJetStream(js jetstream.JetStream) NatsClientOption {
-	return natsClientOptionFunc(func(c *natsClientConfig) {
-		c.js = js
-	})
-}
-
 // chainUnaryClientInterceptors creates a single interceptor that chains multiple interceptors
 func chainUnaryClientInterceptors(interceptors []UnaryClientInterceptor) UnaryClientInterceptor {
 	n := len(interceptors)
@@ -303,3 +294,249 @@ func chainUnaryClientInterceptors(interceptors []UnaryClientInterceptor) UnaryCl
 		return chainedInvoker(ctx, method, req, reply)
 	}
 }
+
+// Stream protocol header constants
+const (
+	natsStreamSeqHeader   = "Nats-Stream-Seq"
+	natsStreamEndHeader   = "Nats-Stream-End"
+	natsStreamInboxHeader = "Nats-Stream-Inbox"
+	natsStreamErrorHeader = "Nats-Stream-Error"
+)
+
+// ServerStreamSender is the server-side interface for sending streaming responses
+type ServerStreamSender interface {
+	// Send publishes one message to the client
+	Send(data []byte) error
+	// SendMsg serializes and sends a proto message to the client
+	SendMsg(msg proto.Message, useJSON bool) error
+	// Close sends the end-of-stream marker to the client
+	Close() error
+	// CloseWithError sends an error and end-of-stream marker to the client
+	CloseWithError(code string, message string) error
+}
+
+// serverStreamSender implements ServerStreamSender using NATS publish
+type serverStreamSender struct {
+	nc      *nats.Conn
+	subject string // The client's reply inbox
+	seq     int
+	mu      sync.Mutex
+	closed  bool
+}
+
+func newServerStreamSender(nc *nats.Conn, replySubject string) *serverStreamSender {
+	return &serverStreamSender{
+		nc:      nc,
+		subject: replySubject,
+		seq:     0,
+	}
+}
+
+func (s *serverStreamSender) Send(data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errors.New("stream is closed")
+	}
+	s.seq++
+	msg := &nats.Msg{
+		Subject: s.subject,
+		Data:    data,
+		Header:  nats.Header{},
+	}
+	msg.Header.Set(natsStreamSeqHeader, strconv.Itoa(s.seq))
+	return s.nc.PublishMsg(msg)
+}
+
+func (s *serverStreamSender) SendMsg(msg proto.Message, useJSON bool) error {
+	var data []byte
+	var err error
+	if useJSON {
+		data, err = protojson.Marshal(msg)
+	} else {
+		data, err = proto.Marshal(msg)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to marshal stream message: %w", err)
+	}
+	return s.Send(data)
+}
+
+func (s *serverStreamSender) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	msg := &nats.Msg{
+		Subject: s.subject,
+		Data:    nil,
+		Header:  nats.Header{},
+	}
+	msg.Header.Set(natsStreamEndHeader, "true")
+	return s.nc.PublishMsg(msg)
+}
+
+func (s *serverStreamSender) CloseWithError(code string, message string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	msg := &nats.Msg{
+		Subject: s.subject,
+		Data:    nil,
+		Header:  nats.Header{},
+	}
+	msg.Header.Set(natsStreamEndHeader, "true")
+	msg.Header.Set("Nats-Service-Error-Code", code)
+	msg.Header.Set("Nats-Service-Error", message)
+	return s.nc.PublishMsg(msg)
+}
+
+// ClientStreamReceiver receives streaming messages from a server
+type ClientStreamReceiver struct {
+	sub       *nats.Subscription
+	msgCh     chan *nats.Msg
+	done      chan struct{}
+	ordered   bool
+	lastSeq   int
+	mu        sync.Mutex
+	closeOnce sync.Once
+}
+
+func newClientStreamReceiver(nc *nats.Conn, inbox string, ordered bool) (*ClientStreamReceiver, error) {
+	msgCh := make(chan *nats.Msg, 64)
+	done := make(chan struct{})
+
+	sub, err := nc.Subscribe(inbox, func(msg *nats.Msg) {
+		select {
+		case msgCh <- msg:
+		case <-done:
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to stream inbox: %w", err)
+	}
+
+	return &ClientStreamReceiver{
+		sub:     sub,
+		msgCh:   msgCh,
+		done:    done,
+		ordered: ordered,
+	}, nil
+}
+
+// Recv blocks until the next message arrives or the stream ends.
+// Returns (nil, io.EOF) on normal stream completion.
+// Returns the raw NATS message for the caller to decode.
+//
+// NOTE: this method returns io.EOF (not a string-wrapped "EOF") on normal
+// stream termination. Callers that previously matched on err.Error() == "EOF"
+// should switch to errors.Is(err, io.EOF).
+func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
+	select {
+	case msg, ok := <-r.msgCh:
+		if !ok {
+			return nil, errors.New("stream closed")
+		}
+		if msg.Header.Get(natsStreamEndHeader) == "true" {
+			if code, desc, ok := checkStreamErrorHeaders(msg.Header); ok {
+				if desc == "" {
+					desc = "stream error"
+				}
+				return nil, fmt.Errorf("stream error [%s]: %s", code, desc)
+			}
+			return nil, io.EOF // Normal end-of-stream
+		}
+		// Enforce ordering if requested
+		if r.ordered {
+			seqStr := msg.Header.Get(natsStreamSeqHeader)
+			if seqStr != "" {
+				seq, _ := strconv.Atoi(seqStr)
+				r.mu.Lock()
+				expected := r.lastSeq + 1
+				r.lastSeq = seq
+				r.mu.Unlock()
+				if seq != expected {
+					return nil, fmt.Errorf("out-of-order stream message: got seq %d, expected %d", seq, expected)
+				}
+			}
+		}
+		return msg, nil
+	case <-r.done:
+		return nil, errors.New("stream closed") // Caller-initiated closure via Close()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// Close unsubscribes from the stream.
+// Returns "stream closed" on subsequent Recv calls (caller-initiated closure).
+func (r *ClientStreamReceiver) Close() error {
+	var err error
+	r.closeOnce.Do(func() {
+		close(r.done)
+		err = r.sub.Unsubscribe()
+	})
+	return err
+}
+
+// checkStreamErrorHeaders inspects h for NATS service-error headers.
+// It checks both the standard "Status"/"Description" pair and the
+// NATS micro "Nats-Service-Error-Code"/"Nats-Service-Error" pair.
+// Returns the code, description, and true if an error header is present.
+func checkStreamErrorHeaders(h nats.Header) (code, desc string, ok bool) {
+	if c := h.Get("Status"); c != "" {
+		return c, h.Get("Description"), true
+	}
+	if c := h.Get("Nats-Service-Error-Code"); c != "" {
+		return c, h.Get("Nats-Service-Error"), true
+	}
+	return "", "", false
+}
+
+// writeFileAtomically writes content produced by fn to path atomically.
+// It creates a temp file in the same directory, calls fn, syncs, closes,
+// then renames to the target path. On any error the temp file is removed.
+func writeFileAtomically(path string, fn func(io.Writer) error) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if tmpName != "" {
+			os.Remove(tmpName)
+		}
+	}()
+
+	if err := fn(tmp); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+	tmpName = "" // prevent deferred cleanup
+	return nil
+}
+
+// Suppress unused import warnings
+var (
+	_ = strconv.Itoa
+	_ = sync.Mutex{}
+	_ = io.EOF
+	_ = os.Remove
+	_ = filepath.Dir
+)

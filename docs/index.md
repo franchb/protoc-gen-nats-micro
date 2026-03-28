@@ -23,8 +23,8 @@ features:
     details: Compile-time safety for requests, responses, errors, and interceptors across Go, TypeScript, and Python.
   - title: Streaming RPC
     details: Server-streaming, client-streaming, and bidirectional streaming over NATS pub/sub with typed wrappers.
-  - title: KV and Object Store
-    details: Auto-persist RPC responses to NATS KV or Object Store with configurable key templates.
+  - title: Chunked Blob Streaming
+    details: Generate Go `io.Reader` and `io.Writer` helpers for large payload transfer, then wire them to NATS ObjectStore in your app code.
   - title: Interceptors and Headers
     details: Full middleware support — logging, auth, tracing. Bidirectional header propagation on requests and responses.
   - title: Multi-Language

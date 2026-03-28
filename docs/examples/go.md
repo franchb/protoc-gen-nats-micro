@@ -17,23 +17,6 @@ go run server.go    # start server
 go run client.go    # run client demo
 ```
 
-## KV Store & Object Store
-
-[Source code →](https://github.com/franchb/protoc-gen-nats-micro/tree/main/examples/kvstore-go)
-
-Demonstrates auto-persistence of RPC responses to NATS KV and Object stores:
-
-- **SaveProfile** — Persists to KV bucket `user_profiles` with key `user.{id}`
-- **GenerateReport** — Persists to Object Store bucket `reports` with key `report.{id}`
-- Client reads cached data directly from stores
-
-```bash
-cd examples/kvstore-go
-go mod tidy
-go run cmd/server/server.go    # start server
-go run cmd/client/client.go    # run client demo
-```
-
 ## Streaming RPC
 
 [Source code →](https://github.com/franchb/protoc-gen-nats-micro/tree/main/examples/streaming-go)
@@ -51,6 +34,8 @@ go mod tidy
 go run cmd/server/main.go    # start server (terminal 1)
 go run cmd/client/main.go    # run client demo (terminal 2)
 ```
+
+For larger payloads, annotate a streaming method with `chunked_io` and connect the generated Go helpers to NATS ObjectStore in your application code. The generator no longer emits storage-specific client or server wrappers.
 
 ### Server Implementation
 

@@ -33,6 +33,8 @@ type ServiceOptions struct {
 	Skip          bool     // Skip generation for this service
 	UseJSON       bool     // Use JSON encoding instead of binary protobuf
 	ErrorCodes    []string // Custom application-specific error codes
+	// Disable queue subscriptions for grouped endpoints generated from this service.
+	QueueGroupDisabled bool
 }
 
 // GetServiceOptions extracts service options from proto service definition
@@ -80,6 +82,7 @@ func GetServiceOptions(service *protogen.Service) ServiceOptions {
 		if len(svcOpts.ErrorCodes) > 0 {
 			opts.ErrorCodes = svcOpts.ErrorCodes
 		}
+		opts.QueueGroupDisabled = svcOpts.QueueGroupDisabled
 	}
 
 	return opts
@@ -87,32 +90,14 @@ func GetServiceOptions(service *protogen.Service) ServiceOptions {
 
 // EndpointOptions contains metadata about an endpoint
 type EndpointOptions struct {
-	Skip        bool              // Skip generation for this endpoint
-	Timeout     time.Duration     // Endpoint-specific timeout (0 = use service default)
-	Metadata    map[string]string // Endpoint-specific metadata
-	KVStore     *KVStoreOpts      // KV store options (nil if not set)
-	ObjectStore *ObjectStoreOpts  // Object store options (nil if not set)
-	Stream      *StreamOpts       // Streaming options (nil if not set)
-	ChunkedIO   *ChunkedIOOpts    // Chunked I/O helper options (nil if not set)
-}
-
-// KVStoreOpts contains KV store persistence options for a method
-type KVStoreOpts struct {
-	Bucket      string        // KV bucket name
-	KeyTemplate string        // Key template with {field} placeholders
-	TTL         time.Duration // TTL for entries (0 = no expiry)
-	Description string        // Human-readable bucket description
-	MaxHistory  int32         // Revisions per key (0 = default 1, max 64)
-	ClientOnly  bool          // Skip server auto-persist; only generate client read/write
-}
-
-// ObjectStoreOpts contains object store options for a method
-type ObjectStoreOpts struct {
-	Bucket      string        // Object store bucket name
-	KeyTemplate string        // Key template with {field} placeholders
-	TTL         time.Duration // TTL for objects (0 = no expiry)
-	Description string        // Human-readable bucket description
-	ClientOnly  bool          // Skip server auto-persist; only generate client read/write
+	Skip               bool              // Skip generation for this endpoint
+	Timeout            time.Duration     // Endpoint-specific timeout (0 = use service default)
+	Metadata           map[string]string // Endpoint-specific metadata
+	QueueGroupDisabled bool              // Disable queue subscriptions for this endpoint
+	PendingMsgLimit    int32             // Subscription pending message limit (0 = library default)
+	PendingBytesLimit  int32             // Subscription pending byte limit (0 = library default)
+	Stream             *StreamOpts       // Streaming options (nil if not set)
+	ChunkedIO          *ChunkedIOOpts    // Chunked I/O helper options (nil if not set)
 }
 
 // StreamOpts contains streaming fine-tuning options
@@ -147,35 +132,9 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 		if len(endpointOpts.Metadata) > 0 {
 			opts.Metadata = endpointOpts.Metadata
 		}
-	}
-
-	// KV Store options
-	if kvOpts, ok := getExtension[*natspb.KVStoreOptions](methodOpts, natspb.E_KvStore); ok && kvOpts.Bucket != "" {
-		kv := &KVStoreOpts{
-			Bucket:      kvOpts.Bucket,
-			KeyTemplate: kvOpts.KeyTemplate,
-			Description: kvOpts.Description,
-			MaxHistory:  kvOpts.MaxHistory,
-			ClientOnly:  kvOpts.ClientOnly,
-		}
-		if kvOpts.Ttl != nil {
-			kv.TTL = kvOpts.Ttl.AsDuration()
-		}
-		opts.KVStore = kv
-	}
-
-	// Object Store options
-	if objOpts, ok := getExtension[*natspb.ObjectStoreOptions](methodOpts, natspb.E_ObjectStore); ok && objOpts.Bucket != "" {
-		obj := &ObjectStoreOpts{
-			Bucket:      objOpts.Bucket,
-			KeyTemplate: objOpts.KeyTemplate,
-			Description: objOpts.Description,
-			ClientOnly:  objOpts.ClientOnly,
-		}
-		if objOpts.Ttl != nil {
-			obj.TTL = objOpts.Ttl.AsDuration()
-		}
-		opts.ObjectStore = obj
+		opts.QueueGroupDisabled = endpointOpts.QueueGroupDisabled
+		opts.PendingMsgLimit = endpointOpts.PendingMsgLimit
+		opts.PendingBytesLimit = endpointOpts.PendingBytesLimit
 	}
 
 	// Stream options

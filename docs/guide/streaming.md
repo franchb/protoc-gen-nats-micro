@@ -178,6 +178,7 @@ Generated Go helpers:
 
 - Download streams: `RecvBytes(ctx)`, `RecvToWriter(ctx, w)`, `RecvToFile(ctx, path)` — `RecvToFile` writes atomically (temp file + rename); no partial file is left on error.
 - Upload streams: `SendBytes(data)`, `SendReader(r, chunkSize)`, `SendFile(path, chunkSize)` — upload helpers are stream-first; on error some chunks may have already been transmitted.
+- For NATS ObjectStore, open the object in your application and pass its reader or writer into these helpers. Storage lifecycle stays outside generated code.
 
 Example:
 

@@ -43,7 +43,9 @@ Existing NATS code generation tools like [nRPC](https://github.com/nats-rpc/nrpc
 - **Standard tooling** - Works with `buf`, `protoc`, existing workflows
 - **Automatic service discovery** - Via NATS, no external dependencies
 - **Built-in load balancing** - NATS queue groups
+- **Backpressure controls** - Per-endpoint pending limits and optional queue-group disable
 - **API versioning** - Subject prefix isolation
+- **Chunked blob helpers** - Go `io.Reader` / `io.Writer` helpers for streaming large payloads
 
 ## Quick Start
 
@@ -63,6 +65,10 @@ go install github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro@
 ### Vendored Proto Options
 
 Copy `extensions/proto/natsmicro/options.proto` from this repo into your project at `protos/natsmicro/options.proto`. Keep `import "natsmicro/options.proto";` in your service protos and run `buf generate` against your local proto tree.
+
+This repo vendors the upstream `google/api` protos locally under
+`third_party/googleapis`, so its own `buf generate` flow does not depend on the
+`buf.build/googleapis/googleapis` registry module.
 
 ### Generate Code
 
@@ -481,6 +487,41 @@ rpc GetProduct(...) returns (...) {
 
 Common patterns: operation type (`read|write|delete`), caching (`cacheable`, `cache_ttl`), performance (`expensive`), auth (`requires_auth`), versioning (`deprecated`)
 
+### Queue Groups and Pending Limits
+
+Use queue-group controls when you need plain fan-out subscriptions instead of
+the default queue-based load balancing, or when you want endpoint-level
+slow-consumer protection.
+
+```protobuf
+service ProductService {
+  option (natsmicro.service) = {
+    queue_group_disabled: true
+  };
+
+  rpc ImportCatalog(ImportCatalogRequest) returns (ImportCatalogResponse) {
+    option (natsmicro.endpoint) = {
+      pending_msg_limit: 128
+      pending_bytes_limit: 1048576
+    };
+  }
+
+  rpc BroadcastInventory(InventoryEvent) returns (google.protobuf.Empty) {
+    option (natsmicro.endpoint) = {
+      queue_group_disabled: true
+    };
+  }
+}
+```
+
+- `queue_group_disabled` on a service disables queue subscriptions for all
+  grouped endpoints in that generated service.
+- `queue_group_disabled` on an endpoint disables queue subscriptions just for
+  that endpoint.
+- `pending_msg_limit` and `pending_bytes_limit` map to
+  `micro.WithEndpointPendingLimits(...)`. NATS may close the subscription with
+  slow-consumer semantics if those buffers are exceeded.
+
 ### Skip Support
 
 Exclude services or endpoints from generation:
@@ -784,10 +825,10 @@ task --list
 Streaming RPC is supported across the generator today.
 
 - Use [Streaming RPC](docs/guide/streaming.md) for typed server-streaming, client-streaming, and bidi helpers over NATS.
-- Use [KV & Object Store](docs/guide/kv-object-store.md) when you want post-RPC persistence of whole protobuf messages.
 - Use `chunked_io` on simple Go streaming blob methods when you want generated `io.Reader` / `io.Writer` helpers on top of streaming.
+- Keep NATS ObjectStore integration in application code: open the object yourself, then pass its reader or writer into the generated streaming helpers.
 
-For larger payload transfer, prefer a streaming RPC with a simple `bytes` chunk message instead of overloading `object_store`.
+For larger payload transfer, prefer a streaming RPC with a simple `bytes` chunk message and wire it to ObjectStore at the application boundary.
 
 ## Contributing
 

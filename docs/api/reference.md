@@ -6,16 +6,18 @@ Complete reference for `protoc-gen-nats-micro` proto extension options.
 
 Service-level configuration using `option (natsmicro.service)`.
 
-| Option           | Type              | Default                    | Description                                  |
-| ---------------- | ----------------- | -------------------------- | -------------------------------------------- |
-| `subject_prefix` | `string`          | Snake-case of service name | NATS subject prefix for all endpoints        |
-| `name`           | `string`          | Service name               | Service name for NATS micro registration     |
-| `version`        | `string`          | `"1.0.0"`                  | Service version                              |
-| `description`    | `string`          | —                          | Human-readable description                   |
-| `timeout`        | `Duration`        | No timeout                 | Default timeout for all endpoints            |
-| `use_json`       | `bool`            | `false`                    | Use JSON encoding instead of binary protobuf |
-| `skip`           | `bool`            | `false`                    | Skip NATS code generation for this service   |
-| `error_codes`    | `repeated string` | —                          | Custom application-specific error codes      |
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `subject_prefix` | `string` | Snake-case of service name | NATS subject prefix for all endpoints |
+| `name` | `string` | Service name | Service name for NATS micro registration |
+| `version` | `string` | `"1.0.0"` | Service version |
+| `description` | `string` | — | Human-readable description |
+| `metadata` | `map<string, string>` | — | Service metadata for discovery and operations |
+| `timeout` | `Duration` | No timeout | Default timeout for all endpoints |
+| `skip` | `bool` | `false` | Skip NATS generation for this service |
+| `json` | `bool` | `false` | Use JSON encoding instead of binary protobuf |
+| `error_codes` | `repeated string` | — | Custom application-specific error codes |
+| `queue_group_disabled` | `bool` | `false` | Register grouped endpoints as plain subscriptions instead of queue subscriptions |
 
 ```protobuf
 service ProductService {
@@ -25,6 +27,7 @@ service ProductService {
     version: "2.0.0"
     description: "Product catalog API"
     timeout: {seconds: 30}
+    metadata: { key: "team" value: "catalog" }
     error_codes: ["OUT_OF_STOCK", "PRICE_CHANGED"]
   };
 }
@@ -34,77 +37,44 @@ service ProductService {
 
 Per-method configuration using `option (natsmicro.endpoint)`.
 
-| Option     | Type           | Default         | Description                          |
-| ---------- | -------------- | --------------- | ------------------------------------ |
-| `timeout`  | `Duration`     | Service timeout | Override timeout for this method     |
-| `skip`     | `bool`         | `false`         | Skip NATS generation for this method |
-| `metadata` | `repeated Map` | —               | Endpoint metadata for discovery      |
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `timeout` | `Duration` | Service timeout | Override timeout for this method |
+| `skip` | `bool` | `false` | Skip NATS generation for this method |
+| `metadata` | `map<string, string>` | — | Endpoint metadata |
+| `queue_group_disabled` | `bool` | `false` | Register this endpoint as a plain subscription |
+| `pending_msg_limit` | `int32` | `0` | Subscription pending message limit; `-1` disables the limit |
+| `pending_bytes_limit` | `int32` | `0` | Subscription pending byte limit; `-1` disables the limit |
 
 ```protobuf
 rpc CreateProduct(CreateReq) returns (CreateResp) {
   option (natsmicro.endpoint) = {
     timeout: {seconds: 10}
-    metadata: { key: "category" value: "write" }
-    metadata: { key: "requires_auth" value: "true" }
-  };
-}
-
-// Skip this endpoint entirely
-rpc AdminReset(ResetReq) returns (ResetResp) {
-  option (natsmicro.endpoint).skip = true;
-}
-```
-
-## KV Store Options
-
-Per-method auto-persistence to NATS KV Store using `option (natsmicro.kv_store)`.
-
-| Option         | Type       | Default      | Description                              |
-| -------------- | ---------- | ------------ | ---------------------------------------- |
-| `bucket`       | `string`   | **Required** | KV bucket name                           |
-| `key_template` | `string`   | **Required** | Key template with `{field}` placeholders |
-| `description`  | `string`   | —            | Bucket description                       |
-| `max_history`  | `int32`    | —            | Max revisions per key                    |
-| `ttl`          | `Duration` | —            | Time-to-live for entries                 |
-
-```protobuf
-rpc SaveProfile(SaveReq) returns (ProfileResp) {
-  option (natsmicro.kv_store) = {
-    bucket: "user_profiles"
-    key_template: "user.{id}"
-    max_history: 5
-    ttl: {seconds: 3600}
+    metadata: { key: "operation" value: "write" }
+    queue_group_disabled: true
+    pending_msg_limit: 1024
+    pending_bytes_limit: 1048576
   };
 }
 ```
 
-## Object Store Options
+## Stream Options
 
-Per-method auto-persistence to NATS Object Store using `option (natsmicro.object_store)`.
+Per-method streaming controls using `option (natsmicro.stream)`.
 
-| Option           | Type     | Default      | Description                              |
-| ---------------- | -------- | ------------ | ---------------------------------------- |
-| `bucket`         | `string` | **Required** | Object store bucket name                 |
-| `key_template`   | `string` | **Required** | Key template with `{field}` placeholders |
-| `description`    | `string` | —            | Bucket description                       |
-
-```protobuf
-rpc GenerateReport(ReportReq) returns (ReportResp) {
-  option (natsmicro.object_store) = {
-    bucket: "reports"
-    key_template: "report.{id}"
-  };
-}
-```
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max_inflight` | `int32` | `0` | Max in-flight messages for generated streaming flow control |
+| `ordered` | `bool` | `false` | Attach sequence headers for ordered delivery |
 
 ## Chunked I/O Options
 
 Per-method helper generation for simple blob transfer over streaming RPC using `option (natsmicro.chunked_io)`.
 
-| Option               | Type     | Default  | Description                                          |
-| -------------------- | -------- | -------- | ---------------------------------------------------- |
-| `chunk_field`        | `string` | `"data"` | Name of the bytes field carrying each streamed chunk |
-| `default_chunk_size` | `int32`  | `65536`  | Default helper chunk size in bytes                   |
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `chunk_field` | `string` | `"data"` | Name of the bytes field carrying each streamed chunk |
+| `default_chunk_size` | `int32` | `65536` | Default helper chunk size in bytes |
 
 Constraints:
 
@@ -129,53 +99,46 @@ rpc ImportSnapshot(stream SnapshotChunk) returns (ImportSnapshotResponse) {
 }
 ```
 
-## Key Template Syntax
+Generated Go helpers:
 
-Key templates extract values from the **request** message to build storage keys:
+- Download streams: `RecvBytes(ctx)`, `RecvToWriter(ctx, w)`, `RecvToFile(ctx, path)`
+- Upload streams: `SendBytes(data)`, `SendReader(r, chunkSize)`, `SendFile(path, chunkSize)`
 
-| Template                          | Request Fields                      | Result         |
-| --------------------------------- | ----------------------------------- | -------------- |
-| `user.{id}`                       | `id: "abc"`                         | `user.abc`     |
-| `{region}.{id}`                   | `region: "us", id: "123"`           | `us.123`       |
-| `orders.{customer_id}.{order_id}` | `customer_id: "c1", order_id: "o5"` | `orders.c1.o5` |
-
-Static segments are kept as-is. `{field}` placeholders are replaced with the corresponding request field value.
+Use these helpers to connect your generated client to NATS ObjectStore in application code. The generator does not emit KV/ObjectStore persistence wrappers.
 
 ## Runtime Options
 
 ### Server Registration Options
 
-| Option                        | Description                        |
-| ----------------------------- | ---------------------------------- |
-| `WithName(name)`              | Override service name              |
-| `WithVersion(version)`        | Override version                   |
-| `WithDescription(desc)`       | Override description               |
-| `WithSubjectPrefix(prefix)`   | Override subject prefix            |
-| `WithTimeout(duration)`       | Override default timeout           |
-| `WithMetadata(map)`           | Replace service metadata           |
-| `WithAdditionalMetadata(map)` | Merge into service metadata        |
-| `WithServerInterceptor(fn)`   | Add server-side interceptor        |
-| `WithJetStream(js)`           | Enable KV/Object Store auto-create |
-| `WithStatsHandler(fn)`        | Set stats handler                  |
-| `WithDoneHandler(fn)`         | Set done handler                   |
-| `WithErrorHandler(fn)`        | Set error handler                  |
+| Option | Description |
+| --- | --- |
+| `WithName(name)` | Override service name |
+| `WithVersion(version)` | Override version |
+| `WithDescription(desc)` | Override description |
+| `WithSubjectPrefix(prefix)` | Override subject prefix |
+| `WithTimeout(duration)` | Override default timeout |
+| `WithMetadata(map)` | Replace service metadata |
+| `WithAdditionalMetadata(map)` | Merge into service metadata |
+| `WithServerInterceptor(fn)` | Add server-side interceptor |
+| `WithStatsHandler(fn)` | Set stats handler |
+| `WithDoneHandler(fn)` | Set done handler |
+| `WithErrorHandler(fn)` | Set error handler |
 
 ### Client Options
 
-| Option                            | Description                  |
-| --------------------------------- | ---------------------------- |
-| `WithClientSubjectPrefix(prefix)` | Override subject prefix      |
-| `WithClientInterceptor(fn)`       | Add client-side interceptor  |
-| `WithClientJetStream(js)`         | Enable KV/Object Store reads |
+| Option | Description |
+| --- | --- |
+| `WithClientSubjectPrefix(prefix)` | Override subject prefix |
+| `WithClientInterceptor(fn)` | Add client-side interceptor |
 
 ## Timeout Precedence
 
 From highest to lowest priority:
 
-1. **Runtime** — `WithTimeout(60s)` on registration
-2. **Endpoint-level** — `option (natsmicro.endpoint) = { timeout: {seconds: 10} }`
-3. **Service-level** — `option (natsmicro.service) = { timeout: {seconds: 30} }`
-4. **Default** — No timeout (0)
+1. Runtime override, such as `WithTimeout(60 * time.Second)`
+2. Endpoint-level `option (natsmicro.endpoint)`
+3. Service-level `option (natsmicro.service)`
+4. No timeout
 
 ## Proto Import
 
