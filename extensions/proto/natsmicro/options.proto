@@ -125,7 +125,9 @@ message ChunkedIOOptions {
   // Name of the bytes field carrying each payload chunk.
   string chunk_field = 1;
 
-  // Default chunk size for generated helpers when the caller passes 0.
+  // Default chunk size in bytes for generated helpers.
+  // When the caller passes 0 to SendReader/SendFile, this value is used.
+  // If set to 0 in the proto option itself, defaults to 65536 (64 KB).
   int32 default_chunk_size = 2;
 }
 

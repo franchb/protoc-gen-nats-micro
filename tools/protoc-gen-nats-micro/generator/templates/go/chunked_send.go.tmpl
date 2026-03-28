@@ -1,4 +1,8 @@
-{{- /* Chunked upload helpers — open struct mode */ -}}
+{{- /* Chunked upload helpers — open struct mode.
+       SendReader and SendFile are identical to chunked_send_opaque.go.tmpl;
+       only SendBytes differs (struct literal vs setter). Separate files are
+       required because Go build tags (//go:build !protoopaque vs protoopaque)
+       must apply to the entire compilation unit. */ -}}
 //go:build !protoopaque
 
 package {{.File.GoPackageName}}
@@ -53,15 +57,9 @@ func (s *{{$svc.GoName}}_{{.GoName}}_ClientStream) SendFile(path string, chunkSi
   if err != nil {
     return fmt.Errorf("failed to open file: %w", err)
   }
+  defer f.Close()
 
-  if err := s.SendReader(f, chunkSize); err != nil {
-    f.Close()
-    return err
-  }
-  if err := f.Close(); err != nil {
-    return fmt.Errorf("failed to close file: %w", err)
-  }
-  return nil
+  return s.SendReader(f, chunkSize)
 }
 {{- end}}
 {{- end}}

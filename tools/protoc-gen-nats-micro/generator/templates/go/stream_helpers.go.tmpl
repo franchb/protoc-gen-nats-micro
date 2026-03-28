@@ -134,8 +134,12 @@ func newClientStreamReceiver(nc *nats.Conn, inbox string, ordered bool) (*Client
 }
 
 // Recv blocks until the next message arrives or the stream ends.
-// Returns nil, io.EOF when the stream is complete.
-// Returns the raw NATS message for caller to decode.
+// Returns (nil, io.EOF) on normal stream completion.
+// Returns the raw NATS message for the caller to decode.
+//
+// NOTE: this method returns io.EOF (not a string-wrapped "EOF") on normal
+// stream termination. Callers that previously matched on err.Error() == "EOF"
+// should switch to errors.Is(err, io.EOF).
 func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
   select {
   case msg, ok := <-r.msgCh:
@@ -143,19 +147,11 @@ func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
       return nil, errors.New("stream closed")
     }
     if msg.Header.Get(natsStreamEndHeader) == "true" {
-      if status := msg.Header.Get("Status"); status != "" {
-        desc := msg.Header.Get("Description")
+      if code, desc, ok := checkStreamErrorHeaders(msg.Header); ok {
         if desc == "" {
           desc = "stream error"
         }
-        return nil, fmt.Errorf("stream error [%s]: %s", status, desc)
-      }
-      if status := msg.Header.Get("Nats-Service-Error-Code"); status != "" {
-        desc := msg.Header.Get("Nats-Service-Error")
-        if desc == "" {
-          desc = "stream error"
-        }
-        return nil, fmt.Errorf("stream error [%s]: %s", status, desc)
+        return nil, fmt.Errorf("stream error [%s]: %s", code, desc)
       }
       return nil, io.EOF // Normal end-of-stream
     }
@@ -190,6 +186,20 @@ func (r *ClientStreamReceiver) Close() error {
     err = r.sub.Unsubscribe()
   })
   return err
+}
+
+// checkStreamErrorHeaders inspects h for NATS service-error headers.
+// It checks both the standard "Status"/"Description" pair and the
+// NATS micro "Nats-Service-Error-Code"/"Nats-Service-Error" pair.
+// Returns the code, description, and true if an error header is present.
+func checkStreamErrorHeaders(h nats.Header) (code, desc string, ok bool) {
+  if c := h.Get("Status"); c != "" {
+    return c, h.Get("Description"), true
+  }
+  if c := h.Get("Nats-Service-Error-Code"); c != "" {
+    return c, h.Get("Nats-Service-Error"), true
+  }
+  return "", "", false
 }
 
 // writeFileAtomically writes content produced by fn to path atomically.
@@ -230,4 +240,7 @@ func writeFileAtomically(path string, fn func(io.Writer) error) error {
 var (
   _ = strconv.Itoa
   _ = sync.Mutex{}
+  _ = io.EOF
+  _ = os.Remove
+  _ = filepath.Dir
 )
