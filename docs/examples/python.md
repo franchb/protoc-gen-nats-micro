@@ -83,5 +83,5 @@ client = ProductServiceClient(nc, WithClientInterceptor(logging_interceptor))
 ```
 
 ::: info
-See [PYTHON.md](https://github.com/Toyz/protoc-gen-nats-micro/blob/main/PYTHON.md) in the repo for the full Python reference.
+See [PYTHON.md](https://github.com/franchb/protoc-gen-nats-micro/blob/main/PYTHON.md) in the repo for the full Python reference.
 :::

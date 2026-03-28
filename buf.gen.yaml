@@ -6,4 +6,4 @@ plugins:
   - local: protoc-gen-go
     out: gen
     opt:
-      - module=github.com/toyz/protoc-gen-nats-micro/gen
+      - module=github.com/franchb/protoc-gen-nats-micro/gen

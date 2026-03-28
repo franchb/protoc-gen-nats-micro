@@ -14,7 +14,7 @@ hero:
       link: /api/reference
     - theme: alt
       text: GitHub
-      link: https://github.com/Toyz/protoc-gen-nats-micro
+      link: https://github.com/franchb/protoc-gen-nats-micro
 
 features:
   - title: Zero Configuration

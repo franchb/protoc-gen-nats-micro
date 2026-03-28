@@ -114,5 +114,5 @@ Without JetStream, KV/Object Store methods will return a runtime error. The RPC 
 :::
 
 ::: tip
-Check out the [kvstore-go example](https://github.com/Toyz/protoc-gen-nats-micro/tree/main/examples/kvstore-go) for a complete working demo.
+Check out the [kvstore-go example](https://github.com/franchb/protoc-gen-nats-micro/tree/main/examples/kvstore-go) for a complete working demo.
 :::

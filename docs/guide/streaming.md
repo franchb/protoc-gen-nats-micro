@@ -229,5 +229,5 @@ _ = resp
 | Bidi-streaming             | ✅  |     —      |   —    |
 
 ::: tip
-Check out the [streaming-go example](https://github.com/Toyz/protoc-gen-nats-micro/tree/main/examples/streaming-go) for a complete working demo of all four RPC patterns.
+Check out the [streaming-go example](https://github.com/franchb/protoc-gen-nats-micro/tree/main/examples/streaming-go) for a complete working demo of all four RPC patterns.
 :::

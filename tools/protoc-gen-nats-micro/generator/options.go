@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	natspb "github.com/toyz/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"

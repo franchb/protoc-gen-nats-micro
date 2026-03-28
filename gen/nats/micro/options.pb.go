@@ -461,7 +461,9 @@ type ChunkedIOOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of the bytes field carrying each payload chunk.
 	ChunkField string `protobuf:"bytes,1,opt,name=chunk_field,json=chunkField,proto3" json:"chunk_field,omitempty"`
-	// Default chunk size for generated helpers when the caller passes 0.
+	// Default chunk size in bytes for generated helpers.
+	// When the caller passes 0 to SendReader/SendFile, this value is used.
+	// If set to 0 in the proto option itself, defaults to 65536 (64 KB).
 	DefaultChunkSize int32 `protobuf:"varint,2,opt,name=default_chunk_size,json=defaultChunkSize,proto3" json:"default_chunk_size,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -637,7 +639,7 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	"\fobject_store\x12\x1e.google.protobuf.MethodOptions\x18Ԇ\x03 \x01(\v2\x1d.natsmicro.ObjectStoreOptionsR\vobjectStore:R\n" +
 	"\x06stream\x12\x1e.google.protobuf.MethodOptions\x18Ն\x03 \x01(\v2\x18.natsmicro.StreamOptionsR\x06stream:\\\n" +
 	"\n" +
-	"chunked_io\x12\x1e.google.protobuf.MethodOptions\x18ֆ\x03 \x01(\v2\x1b.natsmicro.ChunkedIOOptionsR\tchunkedIoB6Z4github.com/toyz/protoc-gen-nats-micro/gen/nats/microb\x06proto3"
+	"chunked_io\x12\x1e.google.protobuf.MethodOptions\x18ֆ\x03 \x01(\v2\x1b.natsmicro.ChunkedIOOptionsR\tchunkedIoB9Z7github.com/franchb/protoc-gen-nats-micro/gen/nats/microb\x06proto3"
 
 var (
 	file_natsmicro_options_proto_rawDescOnce sync.Once

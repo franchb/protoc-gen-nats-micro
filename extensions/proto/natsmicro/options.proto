@@ -5,7 +5,7 @@ package natsmicro;
 import "google/protobuf/descriptor.proto";
 import "google/protobuf/duration.proto";
 
-option go_package = "github.com/toyz/protoc-gen-nats-micro/gen/nats/micro";
+option go_package = "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro";
 
 // Service-level options for NATS microservices
 message ServiceOptions {

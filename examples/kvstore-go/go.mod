@@ -3,8 +3,8 @@ module example
 go 1.25.3
 
 require (
+	github.com/franchb/protoc-gen-nats-micro v0.0.0
 	github.com/nats-io/nats.go v1.37.0
-	github.com/toyz/protoc-gen-nats-micro v0.0.0-20251111043830-f26d09cffc8f
 	google.golang.org/genproto/googleapis/api v0.0.0-20250929231259-57b25ae835d4
 	google.golang.org/protobuf v1.36.10
 )
@@ -18,4 +18,4 @@ require (
 	golang.org/x/text v0.29.0 // indirect
 )
 
-replace github.com/toyz/protoc-gen-nats-micro => ../../
+replace github.com/franchb/protoc-gen-nats-micro => ../../

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	natspb "github.com/toyz/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
@@ -269,7 +269,7 @@ func buildTestFile(t *testing.T, messages []*descriptorpb.DescriptorProto, metho
 		Name:    proto.String("test/blob.proto"),
 		Package: proto.String("test.v1"),
 		Options: &descriptorpb.FileOptions{
-			GoPackage: proto.String("github.com/toyz/protoc-gen-nats-micro/test/blob;blobv1"),
+			GoPackage: proto.String("github.com/franchb/protoc-gen-nats-micro/test/blob;blobv1"),
 		},
 		MessageType: messages,
 		Service: []*descriptorpb.ServiceDescriptorProto{{

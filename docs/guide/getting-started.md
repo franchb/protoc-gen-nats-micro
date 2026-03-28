@@ -21,19 +21,19 @@ Write standard `.proto` files, run `buf generate`, and get production-ready NATS
 ## Installation
 
 ```bash
-go install github.com/toyz/protoc-gen-nats-micro/cmd/protoc-gen-nats-micro@latest
+go install github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro@latest
 ```
 
 ## Proto Dependencies
 
-Add the natsmicro proto options to your `buf.yaml`:
+Vendor the natsmicro proto options into your project:
 
-```yaml
-deps:
-  - buf.build/toyz/natsmicro
+```bash
+mkdir -p protos/natsmicro
+cp /path/to/protoc-gen-nats-micro/extensions/proto/natsmicro/options.proto protos/natsmicro/options.proto
 ```
 
-This lets you use `import "natsmicro/options.proto"` in your proto files without copying anything locally.
+Keep `import "natsmicro/options.proto"` in your proto files and run `buf generate` against your local `protos/` tree. This fork does not require a BSR dependency for the natsmicro options proto.
 
 ## Why not gRPC / nRPC?
 

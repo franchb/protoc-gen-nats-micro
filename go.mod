@@ -1,4 +1,4 @@
-module github.com/toyz/protoc-gen-nats-micro
+module github.com/franchb/protoc-gen-nats-micro
 
 go 1.25.3
 

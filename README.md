@@ -1,6 +1,6 @@
 # protoc-gen-nats-micro
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/toyz/protoc-gen-nats-micro)](https://github.com/Toyz/protoc-gen-nats-micro)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/franchb/protoc-gen-nats-micro)](https://github.com/franchb/protoc-gen-nats-micro)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A Protocol Buffers compiler plugin that generates type-safe NATS microservice code using the official `nats.io/micro` framework.
@@ -57,8 +57,12 @@ Existing NATS code generation tools like [nRPC](https://github.com/nats-rpc/nrpc
 ### Installation
 
 ```bash
-go install github.com/toyz/protoc-gen-nats-micro/cmd/protoc-gen-nats-micro@latest
+go install github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro@latest
 ```
+
+### Vendored Proto Options
+
+Copy `extensions/proto/natsmicro/options.proto` from this repo into your project at `protos/natsmicro/options.proto`. Keep `import "natsmicro/options.proto";` in your service protos and run `buf generate` against your local proto tree.
 
 ### Generate Code
 
@@ -744,7 +748,7 @@ if orderv1.IsOrderServiceOrderExpired(err) {
 
 ```bash
 # Clone repository
-git clone https://github.com/toyz/protoc-gen-nats-micro
+git clone https://github.com/franchb/protoc-gen-nats-micro
 cd protoc-gen-nats-micro
 
 # Generate code

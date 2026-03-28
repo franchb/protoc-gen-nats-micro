@@ -9,7 +9,7 @@ package v1
 import (
 	v11 "example/gen/common/metadata/v1"
 	v1 "example/gen/common/types/v1"
-	_ "github.com/toyz/protoc-gen-nats-micro/gen/nats/micro"
+	_ "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro"
 	_ "google.golang.org/genproto/googleapis/api/annotations"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"

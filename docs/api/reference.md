@@ -179,17 +179,10 @@ From highest to lowest priority:
 
 ## Proto Import
 
-Add the dependency to your `buf.yaml`:
-
-```yaml
-deps:
-  - buf.build/toyz/natsmicro
-```
-
-Then import in your `.proto` files:
+Vendor the options proto into your repo, for example at `protos/natsmicro/options.proto`, and keep this import:
 
 ```protobuf
 import "natsmicro/options.proto";
 ```
 
-All options are defined in [extensions/proto/natsmicro/options.proto](https://github.com/Toyz/protoc-gen-nats-micro/blob/main/extensions/proto/natsmicro/options.proto).
+All options are defined in [extensions/proto/natsmicro/options.proto](https://github.com/franchb/protoc-gen-nats-micro/blob/main/extensions/proto/natsmicro/options.proto).
