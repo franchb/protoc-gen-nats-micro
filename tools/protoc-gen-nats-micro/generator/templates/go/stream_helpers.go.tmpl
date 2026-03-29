@@ -240,7 +240,4 @@ func writeFileAtomically(path string, fn func(io.Writer) error) error {
 var (
   _ = strconv.Itoa
   _ = sync.Mutex{}
-  _ = io.EOF
-  _ = os.Remove
-  _ = filepath.Dir
 )

@@ -176,12 +176,20 @@ func TestGenerateFileEmitsChunkedHelpersForValidStreamingMethods(t *testing.T) {
 		t.Error("RecvToFile should use writeFileAtomically for atomic writes")
 	}
 
-	// Send helpers should NOT be in the main file
-	sendSnippets := []string{"SendBytes", "SendReader", "SendFile"}
-	for _, snippet := range sendSnippets {
-		if strings.Contains(mainFile, "func (s *BlobService_Upload_ClientStream) "+snippet) {
-			t.Errorf("main file should not contain send helper %q (moved to build-tagged files)", snippet)
+	// SendReader and SendFile should be in the main file (not build-tagged)
+	mainSendSnippets := []string{
+		"func (s *BlobService_Upload_ClientStream) SendReader(r io.Reader, chunkSize int) error",
+		"func (s *BlobService_Upload_ClientStream) SendFile(path string, chunkSize int) error",
+	}
+	for _, snippet := range mainSendSnippets {
+		if !strings.Contains(mainFile, snippet) {
+			t.Errorf("main file missing send snippet %q", snippet)
 		}
+	}
+
+	// SendBytes should NOT be in the main file (lives in build-tagged files)
+	if strings.Contains(mainFile, "func (s *BlobService_Upload_ClientStream) SendBytes") {
+		t.Error("main file should not contain SendBytes (moved to build-tagged files)")
 	}
 
 	// Find the open-mode chunked send file
@@ -201,16 +209,17 @@ func TestGenerateFileEmitsChunkedHelpersForValidStreamingMethods(t *testing.T) {
 		t.Error("chunked send file should have //go:build !protoopaque")
 	}
 
-	// Send helpers should be in the chunked file
-	openSendSnippets := []string{
-		"func (s *BlobService_Upload_ClientStream) SendBytes(data []byte) error",
-		"func (s *BlobService_Upload_ClientStream) SendReader(r io.Reader, chunkSize int) error",
-		"func (s *BlobService_Upload_ClientStream) SendFile(path string, chunkSize int) error",
+	// Only SendBytes should be in the chunked file
+	if !strings.Contains(chunkedFile, "func (s *BlobService_Upload_ClientStream) SendBytes(data []byte) error") {
+		t.Error("chunked file missing SendBytes")
 	}
-	for _, snippet := range openSendSnippets {
-		if !strings.Contains(chunkedFile, snippet) {
-			t.Errorf("chunked file missing send snippet %q", snippet)
-		}
+
+	// SendReader and SendFile should NOT be in the chunked file (moved to main)
+	if strings.Contains(chunkedFile, "SendReader") {
+		t.Error("chunked file should not contain SendReader (moved to main file)")
+	}
+	if strings.Contains(chunkedFile, "SendFile") {
+		t.Error("chunked file should not contain SendFile (moved to main file)")
 	}
 
 	// Open-mode SendBytes should use struct literal

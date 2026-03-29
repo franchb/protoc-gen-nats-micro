@@ -1,18 +1,9 @@
-{{- /* Chunked upload helpers — open struct mode.
-       SendReader and SendFile are identical to chunked_send_opaque.go.tmpl;
-       only SendBytes differs (struct literal vs setter). Separate files are
-       required because Go build tags (//go:build !protoopaque vs protoopaque)
-       must apply to the entire compilation unit. */ -}}
+{{- /* Chunked upload helper — open struct mode (SendBytes only).
+       SendReader and SendFile live in the main (non-build-tagged) file
+       since they only call SendBytes and don't depend on proto API mode. */ -}}
 //go:build !protoopaque
 
 package {{.File.GoPackageName}}
-
-import (
-  "errors"
-  "fmt"
-  "io"
-  "os"
-)
 
 {{- range $svc := .File.Services}}
 {{- range .Methods}}
@@ -24,42 +15,6 @@ func (s *{{$svc.GoName}}_{{.GoName}}_ClientStream) SendBytes(data []byte) error 
   return s.Send(&{{.Input.GoIdent.GoName}}{
     {{$endpointOpts.ChunkedIO.GoFieldName}}: data,
   })
-}
-
-// SendReader copies r into chunked stream messages.
-func (s *{{$svc.GoName}}_{{.GoName}}_ClientStream) SendReader(r io.Reader, chunkSize int) error {
-  if chunkSize <= 0 {
-    chunkSize = {{$endpointOpts.ChunkedIO.DefaultChunkSize}}
-  }
-
-  buf := make([]byte, chunkSize)
-  for {
-    n, err := r.Read(buf)
-    if n > 0 {
-      if sendErr := s.SendBytes(buf[:n]); sendErr != nil {
-        return sendErr
-      }
-    }
-    if err != nil {
-      if errors.Is(err, io.EOF) {
-        return nil
-      }
-      return fmt.Errorf("failed to read chunk: %w", err)
-    }
-  }
-}
-
-// SendFile streams a file to the server in chunked messages.
-// On error, some chunks may have already been transmitted; the caller
-// should handle partial-send semantics at the application level.
-func (s *{{$svc.GoName}}_{{.GoName}}_ClientStream) SendFile(path string, chunkSize int) error {
-  f, err := os.Open(path)
-  if err != nil {
-    return fmt.Errorf("failed to open file: %w", err)
-  }
-  defer f.Close()
-
-  return s.SendReader(f, chunkSize)
 }
 {{- end}}
 {{- end}}
