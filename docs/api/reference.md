@@ -68,6 +68,7 @@ Per-method auto-persistence to NATS KV Store using `option (natsmicro.kv_store)`
 | `ttl`          | `Duration` | —            | Time-to-live for entries                 |
 | `write_mode`   | `enum`     | compatibility | Existing-key write behavior              |
 | `persist_failure_policy` | `enum` | best-effort | Server auto-persist failure behavior     |
+| `compression`  | `bool`     | false        | Enable native JetStream bucket compression |
 
 ```protobuf
 rpc SaveProfile(SaveReq) returns (ProfileResp) {
@@ -78,6 +79,7 @@ rpc SaveProfile(SaveReq) returns (ProfileResp) {
     ttl: {seconds: 3600}
     write_mode: KV_WRITE_MODE_COMPARE_AND_SET
     persist_failure_policy: KV_PERSIST_FAILURE_POLICY_REQUIRED
+    compression: true
   };
 }
 ```
@@ -88,6 +90,7 @@ Notes:
 - `KV_WRITE_MODE_COMPARE_AND_SET` uses revision-matching updates on existing keys
 - `KV_WRITE_MODE_CREATE_ONLY` fails when the key already exists
 - `key_ttl` without `write_mode` uses legacy compatibility behavior
+- `compression: true` affects bucket create/update only and is currently wired in generated Go services
 
 ## Object Store Options
 
@@ -98,12 +101,14 @@ Per-method auto-persistence to NATS Object Store using `option (natsmicro.object
 | `bucket`         | `string` | **Required** | Object store bucket name                 |
 | `key_template`   | `string` | **Required** | Key template with `{field}` placeholders |
 | `description`    | `string` | —            | Bucket description                       |
+| `compression`    | `bool`   | false        | Enable native JetStream bucket compression |
 
 ```protobuf
 rpc GenerateReport(ReportReq) returns (ReportResp) {
   option (natsmicro.object_store) = {
     bucket: "reports"
     key_template: "report.{id}"
+    compression: true
   };
 }
 ```

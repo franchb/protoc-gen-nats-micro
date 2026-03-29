@@ -394,8 +394,11 @@ type KVStoreOptions struct {
 	WriteMode KVWriteMode `protobuf:"varint,11,opt,name=write_mode,json=writeMode,proto3,enum=natsmicro.KVWriteMode" json:"write_mode,omitempty"`
 	// Whether generated server auto-persist failures fail the RPC or are logged.
 	PersistFailurePolicy KVPersistFailurePolicy `protobuf:"varint,12,opt,name=persist_failure_policy,json=persistFailurePolicy,proto3,enum=natsmicro.KVPersistFailurePolicy" json:"persist_failure_policy,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Enable native JetStream compression for this KV bucket.
+	// This maps to the client library's bucket compression flag.
+	Compression   bool `protobuf:"varint,13,opt,name=compression,proto3" json:"compression,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *KVStoreOptions) Reset() {
@@ -512,6 +515,13 @@ func (x *KVStoreOptions) GetPersistFailurePolicy() KVPersistFailurePolicy {
 	return KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_UNSPECIFIED
 }
 
+func (x *KVStoreOptions) GetCompression() bool {
+	if x != nil {
+		return x.Compression
+	}
+	return false
+}
+
 // Object Store options for RPC methods
 // When set, the handler stores/retrieves large binary objects
 // from a NATS JetStream Object Store bucket.
@@ -528,7 +538,10 @@ type ObjectStoreOptions struct {
 	Description string `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
 	// If true, skip server-side auto-persist — only generate client read/write
 	// methods
-	ClientOnly    bool `protobuf:"varint,5,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	ClientOnly bool `protobuf:"varint,5,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	// Enable native JetStream compression for this Object Store bucket.
+	// This maps to the client library's bucket compression flag.
+	Compression   bool `protobuf:"varint,6,opt,name=compression,proto3" json:"compression,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -594,6 +607,13 @@ func (x *ObjectStoreOptions) GetDescription() string {
 func (x *ObjectStoreOptions) GetClientOnly() bool {
 	if x != nil {
 		return x.ClientOnly
+	}
+	return false
+}
+
+func (x *ObjectStoreOptions) GetCompression() bool {
+	if x != nil {
+		return x.Compression
 	}
 	return false
 }
@@ -811,7 +831,7 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	"\x13pending_bytes_limit\x18\x06 \x01(\x05R\x11pendingBytesLimit\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9f\x05\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc1\x05\n" +
 	"\x0eKVStoreOptions\x12\x16\n" +
 	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12!\n" +
 	"\fkey_template\x18\x02 \x01(\tR\vkeyTemplate\x12+\n" +
@@ -828,17 +848,19 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	" \x01(\v2\x19.google.protobuf.DurationR\bpurgeTtl\x125\n" +
 	"\n" +
 	"write_mode\x18\v \x01(\x0e2\x16.natsmicro.KVWriteModeR\twriteMode\x12W\n" +
-	"\x16persist_failure_policy\x18\f \x01(\x0e2!.natsmicro.KVPersistFailurePolicyR\x14persistFailurePolicy\x1a;\n" +
+	"\x16persist_failure_policy\x18\f \x01(\x0e2!.natsmicro.KVPersistFailurePolicyR\x14persistFailurePolicy\x12 \n" +
+	"\vcompression\x18\r \x01(\bR\vcompression\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbf\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe1\x01\n" +
 	"\x12ObjectStoreOptions\x12\x16\n" +
 	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12!\n" +
 	"\fkey_template\x18\x02 \x01(\tR\vkeyTemplate\x12+\n" +
 	"\x03ttl\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x03ttl\x12 \n" +
 	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1f\n" +
 	"\vclient_only\x18\x05 \x01(\bR\n" +
-	"clientOnly\"L\n" +
+	"clientOnly\x12 \n" +
+	"\vcompression\x18\x06 \x01(\bR\vcompression\"L\n" +
 	"\rStreamOptions\x12!\n" +
 	"\fmax_inflight\x18\x01 \x01(\x05R\vmaxInflight\x12\x18\n" +
 	"\aordered\x18\x02 \x01(\bR\aordered\"a\n" +

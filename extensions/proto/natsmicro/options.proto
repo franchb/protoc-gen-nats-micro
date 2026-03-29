@@ -136,6 +136,10 @@ message KVStoreOptions {
 
   // Whether generated server auto-persist failures fail the RPC or are logged.
   KVPersistFailurePolicy persist_failure_policy = 12;
+
+  // Enable native JetStream compression for this KV bucket.
+  // This maps to the client library's bucket compression flag.
+  bool compression = 13;
 }
 
 // Object Store options for RPC methods
@@ -158,6 +162,10 @@ message ObjectStoreOptions {
   // If true, skip server-side auto-persist — only generate client read/write
   // methods
   bool client_only = 5;
+
+  // Enable native JetStream compression for this Object Store bucket.
+  // This maps to the client library's bucket compression flag.
+  bool compression = 6;
 }
 
 // Streaming options for fine-tuning streaming RPC behavior

@@ -131,6 +131,7 @@ type KVStoreOpts struct {
 	PurgeTTL             time.Duration          // TTL for purge markers
 	WriteMode            KVWriteMode            // Resolved write behavior
 	PersistFailurePolicy KVPersistFailurePolicy // Resolved server auto-persist failure behavior
+	Compression          bool                   // Enable native JetStream bucket compression
 }
 
 // ObjectStoreOpts contains object store options for a method
@@ -140,6 +141,7 @@ type ObjectStoreOpts struct {
 	TTL         time.Duration // TTL for objects (0 = no expiry)
 	Description string        // Human-readable bucket description
 	ClientOnly  bool          // Skip server auto-persist; only generate client read/write
+	Compression bool          // Enable native JetStream bucket compression
 }
 
 // StreamOpts contains streaming fine-tuning options
@@ -190,6 +192,7 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 			Metadata:             kvOpts.Metadata,
 			WriteMode:            resolveKVWriteMode(kvOpts),
 			PersistFailurePolicy: resolveKVPersistFailurePolicy(kvOpts),
+			Compression:          kvOpts.Compression,
 		}
 		if kvOpts.Ttl != nil {
 			kv.TTL = kvOpts.Ttl.AsDuration()
@@ -213,6 +216,7 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 			KeyTemplate: objOpts.KeyTemplate,
 			Description: objOpts.Description,
 			ClientOnly:  objOpts.ClientOnly,
+			Compression: objOpts.Compression,
 		}
 		if objOpts.Ttl != nil {
 			obj.TTL = objOpts.Ttl.AsDuration()

@@ -23,6 +23,7 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
   option (natsmicro.kv_store) = {
     bucket: "user_profiles"
     key_template: "user.{id}"    // ← {id} must exist on SaveProfileRequest
+    compression: true
   };
 }
 
@@ -30,6 +31,7 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
   option (natsmicro.object_store) = {
     bucket: "reports"
     key_template: "report.{id}"
+    compression: true
   };
 }
 ```

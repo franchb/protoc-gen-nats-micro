@@ -316,6 +316,7 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
     max_history: 5                // Keep 5 revisions per key (optional)
     write_mode: KV_WRITE_MODE_COMPARE_AND_SET
     persist_failure_policy: KV_PERSIST_FAILURE_POLICY_REQUIRED
+    compression: true
   };
 }
 ```
@@ -332,6 +333,7 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
 | `client_only`  | `bool`     | Optional. Skip server-side auto-persist; only generate client read/write methods.        |
 | `write_mode`   | `enum`     | Optional. Explicit existing-key write semantics.                                         |
 | `persist_failure_policy` | `enum` | Optional. Whether server auto-persist is required or best-effort.                  |
+| `compression`  | `bool`     | Optional. Enable native JetStream bucket compression during bucket create/update.         |
 
 **What happens at runtime:**
 
@@ -363,6 +365,8 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
 
 **Auto-creation:** When `WithJetStream(js)` is provided, buckets are automatically created (or updated) during service registration using `CreateOrUpdateKeyValue` with the configured options. No manual bucket setup required.
 
+**Compression:** `compression: true` maps directly to native JetStream bucket compression. In this fork it is wired in generated Go service registration only; it does not add a custom RPC payload codec or a user-selectable compression algorithm.
+
 ### object_store
 
 **Extension:** `natsmicro.object_store`
@@ -376,6 +380,7 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
     key_template: "report.{id}"
     ttl: {seconds: 86400}         // Auto-expire after 24 hours (optional)
     description: "Generated reports cache"  // Bucket description (optional)
+    compression: true
   };
 }
 ```
@@ -389,6 +394,7 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
 | `ttl`          | `Duration` | Optional. Auto-expire objects after this duration.                                |
 | `description`  | `string`   | Optional. Human-readable bucket description.                                      |
 | `client_only`  | `bool`     | Optional. Skip server-side auto-persist; only generate client read/write methods. |
+| `compression`  | `bool`     | Optional. Enable native JetStream bucket compression during bucket create/update. |
 
 **Generated client methods:**
 

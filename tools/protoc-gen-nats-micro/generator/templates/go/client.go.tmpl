@@ -43,7 +43,12 @@ type {{.Service.GoName}}NatsClient struct {
   js            jetstream.JetStream        // Optional JetStream for KV/ObjectStore reads
 }
 
-func put{{.Service.GoName}}ClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode kvWriteMode, keyTTL time.Duration) error {
+{{$kvWriteModeType := printf "%sKVWriteMode" (ToLowerFirst .Service.GoName)}}
+{{$kvWriteModeLastWriteWins := printf "%sLastWriteWins" $kvWriteModeType}}
+{{$kvWriteModeCompareAndSet := printf "%sCompareAndSet" $kvWriteModeType}}
+{{$kvWriteModeCreateOnly := printf "%sCreateOnly" $kvWriteModeType}}
+
+func put{{.Service.GoName}}ClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode {{$kvWriteModeType}}, keyTTL time.Duration) error {
   create := func() error {
     if keyTTL > 0 {
       _, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
@@ -54,9 +59,9 @@ func put{{.Service.GoName}}ClientKVValue(ctx context.Context, kv jetstream.KeyVa
   }
 
   switch mode {
-  case kvWriteModeCreateOnly:
+  case {{$kvWriteModeCreateOnly}}:
     return create()
-  case kvWriteModeCompareAndSet:
+  case {{$kvWriteModeCompareAndSet}}:
     if err := create(); err == nil {
       return nil
     } else if !errors.Is(err, jetstream.ErrKeyExists) {
@@ -73,7 +78,7 @@ func put{{.Service.GoName}}ClientKVValue(ctx context.Context, kv jetstream.KeyVa
 
     _, err = kv.Update(ctx, key, data, entry.Revision())
     return err
-  case kvWriteModeLastWriteWins:
+  case {{$kvWriteModeLastWriteWins}}:
     if err := create(); err == nil {
       return nil
     } else if !errors.Is(err, jetstream.ErrKeyExists) {
@@ -267,7 +272,7 @@ func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToKV(ctx context.Context,
     kv,
     key,
     data,
-    {{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}kvWriteModeCompareAndSet{{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}kvWriteModeCreateOnly{{- else}}kvWriteModeLastWriteWins{{- end}},
+    {{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}{{$kvWriteModeCompareAndSet}}{{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}{{$kvWriteModeCreateOnly}}{{- else}}{{$kvWriteModeLastWriteWins}}{{- end}},
     {{$endpointOpts.KVStore.KeyTTL.Nanoseconds}}*time.Nanosecond,
   ); err != nil {
     return fmt.Errorf("KV put failed for key %q: %w", key, err)

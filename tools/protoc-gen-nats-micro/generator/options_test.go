@@ -173,6 +173,26 @@ func TestOptionsProtoExposesNewKVFields(t *testing.T) {
 	}
 }
 
+func TestOptionsProtoExposesStorageCompressionFields(t *testing.T) {
+	root := repoRootFromTest(t)
+	optionsProtoPath := filepath.Join(root, "extensions", "proto", "natsmicro", "options.proto")
+
+	data, err := os.ReadFile(optionsProtoPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", optionsProtoPath, err)
+	}
+
+	text := string(data)
+	for _, required := range []string{
+		"bool compression = 13;",
+		"bool compression = 6;",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("options.proto is missing storage compression field %q", required)
+		}
+	}
+}
+
 func TestGetEndpointOptionsExtractsNewKVOptions(t *testing.T) {
 	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
 		messageDescriptor("CreateBlobRequest", stringField("id", 1)),
@@ -212,6 +232,52 @@ func TestGetEndpointOptionsExtractsNewKVOptions(t *testing.T) {
 	}
 	if gotKV.PurgeTTL != 30*time.Minute {
 		t.Fatalf("GetEndpointOptions().KVStore.PurgeTTL = %v, want %v", gotKV.PurgeTTL, 30*time.Minute)
+	}
+}
+
+func TestGetEndpointOptionsExtractsStorageCompressionOptions(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("CreateBlobRequest", stringField("id", 1)),
+		messageDescriptor("CreateBlobResponse", stringField("id", 1)),
+		messageDescriptor("GetBlobRequest", stringField("id", 1)),
+		messageDescriptor("GetBlobResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("CreateBlob", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+		methodDescriptor("GetBlob", "GetBlobRequest", "GetBlobResponse", false, false, nil),
+	})
+
+	kvMethodOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(kvMethodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+		Bucket:      "blob_cache",
+		KeyTemplate: "blob.{id}",
+		Compression: true,
+	})
+	file.Service[0].Method[0].Options = kvMethodOpts
+
+	objectMethodOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(objectMethodOpts, natspb.E_ObjectStore, &natspb.ObjectStoreOptions{
+		Bucket:      "blob_objects",
+		KeyTemplate: "blob.{id}",
+		Compression: true,
+	})
+	file.Service[0].Method[1].Options = objectMethodOpts
+
+	_, target := newTestPlugin(t, file)
+
+	gotKV := GetEndpointOptions(target.Services[0].Methods[0]).KVStore
+	if gotKV == nil {
+		t.Fatal("GetEndpointOptions() did not extract kv_store")
+	}
+	if !gotKV.Compression {
+		t.Fatal("GetEndpointOptions().KVStore did not extract compression")
+	}
+
+	gotObject := GetEndpointOptions(target.Services[0].Methods[1]).ObjectStore
+	if gotObject == nil {
+		t.Fatal("GetEndpointOptions() did not extract object_store")
+	}
+	if !gotObject.Compression {
+		t.Fatal("GetEndpointOptions().ObjectStore did not extract compression")
 	}
 }
 
@@ -263,8 +329,8 @@ func TestGenerateFileEmitsNewKVFeatureWiring(t *testing.T) {
 		"LimitMarkerTTL: 900000000000 * time.Nanosecond",
 		"Metadata: map[string]string{",
 		"\"tier\": \"gold\",",
-		"func putBlobServiceKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode kvWriteMode, keyTTL time.Duration) error",
-		"kvWriteModeCompareAndSet",
+		"func putBlobServiceKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode blobServiceKVWriteMode, keyTTL time.Duration) error",
+		"blobServiceKVWriteModeCompareAndSet",
 		"jetstream.KeyTTL(keyTTL)",
 		"300000000000*time.Nanosecond",
 	} {
@@ -276,13 +342,69 @@ func TestGenerateFileEmitsNewKVFeatureWiring(t *testing.T) {
 	for _, snippet := range []string{
 		"func (c *BlobServiceNatsClient) PurgeCreateBlobFromKV(ctx context.Context, key string) error",
 		"jetstream.PurgeTTL(1800000000000*time.Nanosecond)",
-		"func putBlobServiceClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode kvWriteMode, keyTTL time.Duration) error",
+		"func putBlobServiceClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode blobServiceKVWriteMode, keyTTL time.Duration) error",
 		"jetstream.KeyTTL(keyTTL)",
 		"300000000000*time.Nanosecond",
 	} {
 		if !strings.Contains(mainFile, snippet) {
 			t.Fatalf("generated file missing snippet %q", snippet)
 		}
+	}
+}
+
+func TestGenerateFileEmitsStorageCompressionWiring(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("CreateBlobRequest", stringField("id", 1)),
+		messageDescriptor("CreateBlobResponse", stringField("id", 1)),
+		messageDescriptor("GetBlobRequest", stringField("id", 1)),
+		messageDescriptor("GetBlobResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("CreateBlob", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+		methodDescriptor("GetBlob", "GetBlobRequest", "GetBlobResponse", false, false, nil),
+	})
+
+	kvMethodOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(kvMethodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+		Bucket:      "blob_cache",
+		KeyTemplate: "blob.{id}",
+		Compression: true,
+	})
+	file.Service[0].Method[0].Options = kvMethodOpts
+
+	objectMethodOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(objectMethodOpts, natspb.E_ObjectStore, &natspb.ObjectStoreOptions{
+		Bucket:      "blob_objects",
+		KeyTemplate: "blob.{id}",
+		Compression: true,
+	})
+	file.Service[0].Method[1].Options = objectMethodOpts
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewGoLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.go", target.GoImportPath)
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	var mainFile string
+	for _, f := range gen.Response().File {
+		if strings.HasSuffix(f.GetName(), "_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "shared_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "_chunked_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "_chunked_protoopaque_nats.pb.go") {
+			mainFile = f.GetContent()
+		}
+	}
+	if mainFile == "" {
+		t.Fatal("failed to find generated Go main file")
+	}
+
+	if strings.Count(mainFile, "Compression: true") < 2 {
+		t.Fatalf("generated Go file did not emit compression for both KV and ObjectStore:\n%s", mainFile)
 	}
 }
 
@@ -448,20 +570,20 @@ func TestGenerateFileEmitsExplicitKVWriteModesAndRequiredPersist(t *testing.T) {
 	}
 
 	for _, snippet := range []string{
-		"type kvWriteMode int",
-		"kvWriteModeLastWriteWins",
-		"kvWriteModeCompareAndSet",
-		"kvWriteModeCreateOnly",
-		"type kvPersistFailurePolicy int",
-		"kvPersistFailurePolicyBestEffort",
-		"kvPersistFailurePolicyRequired",
-		"case kvWriteModeLastWriteWins:",
-		"case kvWriteModeCompareAndSet:",
-		"case kvWriteModeCreateOnly:",
+		"type blobServiceKVWriteMode int",
+		"blobServiceKVWriteModeLastWriteWins",
+		"blobServiceKVWriteModeCompareAndSet",
+		"blobServiceKVWriteModeCreateOnly",
+		"type blobServiceKVPersistFailurePolicy int",
+		"blobServiceKVPersistFailurePolicyBestEffort",
+		"blobServiceKVPersistFailurePolicyRequired",
+		"case blobServiceKVWriteModeLastWriteWins:",
+		"case blobServiceKVWriteModeCompareAndSet:",
+		"case blobServiceKVWriteModeCreateOnly:",
 		"putBlobServiceKVValue(",
-		"kvWriteModeLastWriteWins",
-		"kvWriteModeCompareAndSet",
-		"kvWriteModeCreateOnly",
+		"blobServiceKVWriteModeLastWriteWins",
+		"blobServiceKVWriteModeCompareAndSet",
+		"blobServiceKVWriteModeCreateOnly",
 		"300000000000*time.Nanosecond",
 		"req.Error(BlobServiceErrCodeInternal, fmt.Sprintf(\"failed to persist CreateBlobLWW response to KV: %v\", kvErr), nil)",
 		"putBlobServiceClientKVValue(",
@@ -520,6 +642,79 @@ func TestGenerateFileFailsRequiredKVPersistWhenJetStreamIsMissing(t *testing.T) 
 		if !strings.Contains(mainFile, snippet) {
 			t.Fatalf("generated file missing snippet %q", snippet)
 		}
+	}
+}
+
+func TestGenerateFilePrefixesKVHelperTypesPerService(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("CreateBlobRequest", stringField("id", 1)),
+		messageDescriptor("CreateBlobResponse", stringField("id", 1)),
+		messageDescriptor("GetBlobRequest", stringField("id", 1)),
+		messageDescriptor("GetBlobResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("CreateBlob", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+		methodDescriptor("GetBlob", "GetBlobRequest", "GetBlobResponse", false, false, nil),
+	})
+
+	secondService := proto.Clone(file.Service[0]).(*descriptorpb.ServiceDescriptorProto)
+	secondService.Name = proto.String("AuditService")
+	file.Service = append(file.Service, secondService)
+
+	for _, service := range file.Service {
+		for _, method := range service.Method {
+			methodOpts := &descriptorpb.MethodOptions{}
+			proto.SetExtension(methodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+				Bucket:      "blob_cache",
+				KeyTemplate: "blob.{id}",
+			})
+			method.Options = methodOpts
+		}
+	}
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewGoLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.go", target.GoImportPath)
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	var mainFile string
+	for _, f := range gen.Response().File {
+		if strings.HasSuffix(f.GetName(), "_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "shared_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "_chunked_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "_chunked_protoopaque_nats.pb.go") {
+			mainFile = f.GetContent()
+		}
+	}
+	if mainFile == "" {
+		t.Fatal("failed to find generated Go main file")
+	}
+
+	for _, snippet := range []string{
+		"type blobServiceKVWriteMode int",
+		"type auditServiceKVWriteMode int",
+		"type blobServiceKVPersistFailurePolicy int",
+		"type auditServiceKVPersistFailurePolicy int",
+		"func putBlobServiceKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode blobServiceKVWriteMode, keyTTL time.Duration) error",
+		"func putAuditServiceKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode auditServiceKVWriteMode, keyTTL time.Duration) error",
+		"blobServiceKVWriteModeLastWriteWins",
+		"auditServiceKVWriteModeLastWriteWins",
+	} {
+		if !strings.Contains(mainFile, snippet) {
+			t.Fatalf("generated file missing snippet %q", snippet)
+		}
+	}
+
+	if strings.Contains(mainFile, "type kvWriteMode int") {
+		t.Fatalf("generated file still emits unscoped kvWriteMode type:\n%s", mainFile)
+	}
+	if strings.Contains(mainFile, "type kvPersistFailurePolicy int") {
+		t.Fatalf("generated file still emits unscoped kvPersistFailurePolicy type:\n%s", mainFile)
 	}
 }
 

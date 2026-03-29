@@ -146,6 +146,9 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 					{{- end}}
 				},
 				{{- end}}
+				{{- if $eopts.KVStore.Compression}}
+				Compression: true,
+				{{- end}}
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create KV bucket \"{{$eopts.KVStore.Bucket}}\": %v\n", err)
 			}
@@ -159,6 +162,9 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 			{{- end}}
 			{{- if $eopts.ObjectStore.TTL.Nanoseconds}}
 			TTL:         {{$eopts.ObjectStore.TTL.Nanoseconds}} * time.Nanosecond,
+			{{- end}}
+			{{- if $eopts.ObjectStore.Compression}}
+			Compression: true,
 			{{- end}}
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create Object Store bucket \"{{$eopts.ObjectStore.Bucket}}\": %v\n", err)
@@ -259,22 +265,30 @@ type {{ToLowerFirst .Service.GoName}}Handlers struct {
 	js             jetstream.JetStream        // Optional JetStream context for KV/ObjectStore
 }
 
-type kvWriteMode int
+{{$kvWriteModeType := printf "%sKVWriteMode" (ToLowerFirst .Service.GoName)}}
+{{$kvWriteModeLastWriteWins := printf "%sLastWriteWins" $kvWriteModeType}}
+{{$kvWriteModeCompareAndSet := printf "%sCompareAndSet" $kvWriteModeType}}
+{{$kvWriteModeCreateOnly := printf "%sCreateOnly" $kvWriteModeType}}
+{{$kvPersistFailurePolicyType := printf "%sKVPersistFailurePolicy" (ToLowerFirst .Service.GoName)}}
+{{$kvPersistFailurePolicyBestEffort := printf "%sBestEffort" $kvPersistFailurePolicyType}}
+{{$kvPersistFailurePolicyRequired := printf "%sRequired" $kvPersistFailurePolicyType}}
+
+type {{$kvWriteModeType}} int
 
 const (
-	kvWriteModeLastWriteWins kvWriteMode = iota + 1
-	kvWriteModeCompareAndSet
-	kvWriteModeCreateOnly
+	{{$kvWriteModeLastWriteWins}} {{$kvWriteModeType}} = iota + 1
+	{{$kvWriteModeCompareAndSet}}
+	{{$kvWriteModeCreateOnly}}
 )
 
-type kvPersistFailurePolicy int
+type {{$kvPersistFailurePolicyType}} int
 
 const (
-	kvPersistFailurePolicyBestEffort kvPersistFailurePolicy = iota + 1
-	kvPersistFailurePolicyRequired
+	{{$kvPersistFailurePolicyBestEffort}} {{$kvPersistFailurePolicyType}} = iota + 1
+	{{$kvPersistFailurePolicyRequired}}
 )
 
-func put{{.Service.GoName}}KVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode kvWriteMode, keyTTL time.Duration) error {
+func put{{.Service.GoName}}KVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode {{$kvWriteModeType}}, keyTTL time.Duration) error {
 	create := func() error {
 		if keyTTL > 0 {
 			_, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
@@ -285,9 +299,9 @@ func put{{.Service.GoName}}KVValue(ctx context.Context, kv jetstream.KeyValue, k
 	}
 
 	switch mode {
-	case kvWriteModeCreateOnly:
+	case {{$kvWriteModeCreateOnly}}:
 		return create()
-	case kvWriteModeCompareAndSet:
+	case {{$kvWriteModeCompareAndSet}}:
 		if err := create(); err == nil {
 			return nil
 		} else if !errors.Is(err, jetstream.ErrKeyExists) {
@@ -304,7 +318,7 @@ func put{{.Service.GoName}}KVValue(ctx context.Context, kv jetstream.KeyValue, k
 
 		_, err = kv.Update(ctx, key, data, entry.Revision())
 		return err
-	case kvWriteModeLastWriteWins:
+	case {{$kvWriteModeLastWriteWins}}:
 		if err := create(); err == nil {
 			return nil
 		} else if !errors.Is(err, jetstream.ErrKeyExists) {
@@ -459,7 +473,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 						kv,
 						kvKey,
 						data,
-						{{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}kvWriteModeCompareAndSet{{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}kvWriteModeCreateOnly{{- else}}kvWriteModeLastWriteWins{{- end}},
+						{{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}{{$kvWriteModeCompareAndSet}}{{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}{{$kvWriteModeCreateOnly}}{{- else}}{{$kvWriteModeLastWriteWins}}{{- end}},
 						{{$endpointOpts.KVStore.KeyTTL.Nanoseconds}}*time.Nanosecond,
 					); kvErr != nil {
 						{{- if IsKVPersistFailureRequired $endpointOpts.KVStore}}
