@@ -718,6 +718,107 @@ func TestGenerateFilePrefixesKVHelperTypesPerService(t *testing.T) {
 	}
 }
 
+func TestGenerateFileQualifiesImportedGoMessageTypes(t *testing.T) {
+	imported := &descriptorpb.FileDescriptorProto{
+		Name:    proto.String("echelon/komrad/ml/v1/messages.proto"),
+		Package: proto.String("echelon.komrad.ml.v1"),
+		Options: &descriptorpb.FileOptions{
+			GoPackage: proto.String("github.com/franchb/protoc-gen-nats-micro/test/echelon/komrad/ml/v1;v1"),
+		},
+		MessageType: []*descriptorpb.DescriptorProto{
+			messageDescriptor("CreateJobRequest", stringField("id", 1)),
+			messageDescriptor("CreateJobResponse", stringField("id", 1)),
+			messageDescriptor("WatchJobsRequest", stringField("id", 1)),
+			messageDescriptor("JobEvent", stringField("id", 1)),
+			messageDescriptor("UploadChunk", bytesField("data", 1)),
+		},
+		Syntax: proto.String("proto3"),
+	}
+
+	bus := &descriptorpb.FileDescriptorProto{
+		Name:       proto.String("echelon/bus/v1/service.proto"),
+		Package:    proto.String("echelon.bus.v1"),
+		Dependency: []string{"echelon/komrad/ml/v1/messages.proto"},
+		Options: &descriptorpb.FileOptions{
+			GoPackage: proto.String("github.com/franchb/protoc-gen-nats-micro/test/echelon/bus/v1;busv1"),
+		},
+		Service: []*descriptorpb.ServiceDescriptorProto{{
+			Name: proto.String("BusService"),
+			Method: []*descriptorpb.MethodDescriptorProto{
+				methodDescriptorWithTypes(
+					"CreateJob",
+					".echelon.komrad.ml.v1.CreateJobRequest",
+					".echelon.komrad.ml.v1.CreateJobResponse",
+					false,
+					false,
+					nil,
+				),
+				methodDescriptorWithTypes(
+					"WatchJobs",
+					".echelon.komrad.ml.v1.WatchJobsRequest",
+					".echelon.komrad.ml.v1.JobEvent",
+					false,
+					true,
+					nil,
+				),
+				methodDescriptorWithTypes(
+					"UploadJobs",
+					".echelon.komrad.ml.v1.UploadChunk",
+					".echelon.komrad.ml.v1.CreateJobResponse",
+					true,
+					false,
+					&natspb.ChunkedIOOptions{ChunkField: "data"},
+				),
+			},
+		}},
+		Syntax: proto.String("proto3"),
+	}
+
+	gen, target := newTestPluginWithFiles(t, bus.GetName(), imported, bus)
+	lang := NewGoLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.go", target.GoImportPath)
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	fileContents := map[string]string{}
+	for _, f := range gen.Response().File {
+		fileContents[f.GetName()] = f.GetContent()
+	}
+
+	mainFile := findGeneratedGoFile(t, fileContents, "_nats.pb.go")
+	for _, snippet := range []string{
+		"\"github.com/franchb/protoc-gen-nats-micro/test/echelon/komrad/ml/v1\"",
+		"CreateJob(context.Context, *v1.CreateJobRequest) (*v1.CreateJobResponse, error)",
+		"WatchJobs(context.Context, *v1.WatchJobsRequest, *BusService_WatchJobs_Stream) error",
+		"var msg v1.CreateJobRequest",
+		"typedReq, ok := request.(*v1.CreateJobRequest)",
+		"typedResp, ok := resp.(*v1.CreateJobResponse)",
+		"func (c *BusServiceNatsClient) CreateJob(ctx context.Context, req *v1.CreateJobRequest) (*v1.CreateJobResponse, error)",
+		"func (s *BusService_WatchJobs_Stream) Send(msg *v1.JobEvent) error",
+		"func (s *BusService_UploadJobs_ClientStream) Send(msg *v1.UploadChunk) error",
+		"func (s *BusService_UploadJobs_ClientStream) CloseAndRecv(ctx context.Context) (*v1.CreateJobResponse, error)",
+	} {
+		if !strings.Contains(mainFile, snippet) {
+			t.Fatalf("generated Go file missing cross-package snippet %q", snippet)
+		}
+	}
+
+	chunkedFile := findGeneratedGoFile(t, fileContents, "_chunked_nats.pb.go")
+	if !strings.Contains(chunkedFile, "return s.Send(&v1.UploadChunk{") {
+		t.Fatalf("chunked send helper did not qualify imported chunk type:\n%s", chunkedFile)
+	}
+
+	chunkedOpaqueFile := findGeneratedGoFile(t, fileContents, "_chunked_protoopaque_nats.pb.go")
+	if !strings.Contains(chunkedOpaqueFile, "msg := &v1.UploadChunk{}") {
+		t.Fatalf("opaque chunked send helper did not qualify imported chunk type:\n%s", chunkedOpaqueFile)
+	}
+}
+
 func TestAPIDocsDescribeExplicitKVSemantics(t *testing.T) {
 	root := repoRootFromTest(t)
 	apiDocPath := filepath.Join(root, "API.md")
@@ -739,4 +840,45 @@ func TestAPIDocsDescribeExplicitKVSemantics(t *testing.T) {
 			t.Fatalf("API.md is missing explicit KV semantics guidance %q", required)
 		}
 	}
+}
+
+func methodDescriptorWithTypes(name, inputType, outputType string, clientStreaming, serverStreaming bool, chunked *natspb.ChunkedIOOptions) *descriptorpb.MethodDescriptorProto {
+	opts := &descriptorpb.MethodOptions{}
+	if chunked != nil {
+		proto.SetExtension(opts, natspb.E_ChunkedIo, chunked)
+	}
+
+	return &descriptorpb.MethodDescriptorProto{
+		Name:            proto.String(name),
+		InputType:       proto.String(inputType),
+		OutputType:      proto.String(outputType),
+		ClientStreaming: proto.Bool(clientStreaming),
+		ServerStreaming: proto.Bool(serverStreaming),
+		Options:         opts,
+	}
+}
+
+func findGeneratedGoFile(t *testing.T, fileContents map[string]string, suffix string) string {
+	t.Helper()
+
+	for name, content := range fileContents {
+		if !strings.HasSuffix(name, suffix) {
+			continue
+		}
+		if strings.HasSuffix(name, "shared_nats.pb.go") {
+			continue
+		}
+		if suffix == "_nats.pb.go" &&
+			(strings.HasSuffix(name, "_chunked_nats.pb.go") ||
+				strings.HasSuffix(name, "_chunked_protoopaque_nats.pb.go")) {
+			continue
+		}
+		if suffix == "_chunked_nats.pb.go" && strings.HasSuffix(name, "_chunked_protoopaque_nats.pb.go") {
+			continue
+		}
+			return content
+	}
+
+	t.Fatalf("failed to find generated Go file with suffix %q", suffix)
+	return ""
 }

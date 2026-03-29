@@ -10,15 +10,15 @@ type {{.Service.GoName}}Nats interface {
 {{- $endpointOpts := GetEndpointOptions .}}
 {{- if not $endpointOpts.Skip}}
 {{- if IsUnary .}}
-	{{.GoName}}(context.Context, *{{.Input.GoIdent.GoName}}) (*{{.Output.GoIdent.GoName}}, error)
+	{{.GoName}}(context.Context, *{{$.QualifiedGoIdent .Input.GoIdent}}) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error)
 {{- else if IsServerStreaming .}}
 {{- if not (IsClientStreaming .)}}
-	{{.GoName}}(context.Context, *{{.Input.GoIdent.GoName}}, *{{$.Service.GoName}}_{{.GoName}}_Stream) error
+	{{.GoName}}(context.Context, *{{$.QualifiedGoIdent .Input.GoIdent}}, *{{$.Service.GoName}}_{{.GoName}}_Stream) error
 {{- end}}
 {{- end}}
 {{- if IsClientStreaming .}}
 {{- if not (IsServerStreaming .)}}
-	{{.GoName}}(context.Context, *{{$.Service.GoName}}_{{.GoName}}_Stream) (*{{.Output.GoIdent.GoName}}, error)
+	{{.GoName}}(context.Context, *{{$.Service.GoName}}_{{.GoName}}_Stream) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error)
 {{- end}}
 {{- end}}
 {{- if IsBidiStreaming .}}
@@ -361,7 +361,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	outgoingHeadersPtr := &nats.Header{}
 	ctx = context.WithValue(ctx, outgoingHeadersKey, outgoingHeadersPtr)
 
-	var msg {{.Input.GoIdent.GoName}}
+	var msg {{$.QualifiedGoIdent .Input.GoIdent}}
 	if h.useJSON {
 		if err := protojson.Unmarshal(req.Data(), &msg); err != nil {
 			req.Error({{$.Service.GoName}}ErrCodeInvalidArgument, fmt.Sprintf("failed to decode JSON request: %v", err), nil)
@@ -376,7 +376,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 
 	// Define the handler function
 	handler := func(ctx context.Context, request interface{}) (interface{}, error) {
-		typedReq, ok := request.(*{{.Input.GoIdent.GoName}})
+		typedReq, ok := request.(*{{$.QualifiedGoIdent .Input.GoIdent}})
 		if !ok {
 			return nil, fmt.Errorf("invalid request type")
 		}
@@ -420,7 +420,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	}
 
 	// Type assert response back to the expected type
-	typedResp, ok := resp.(*{{.Output.GoIdent.GoName}})
+	typedResp, ok := resp.(*{{$.QualifiedGoIdent .Output.GoIdent}})
 	if !ok {
 		req.Error({{$.Service.GoName}}ErrCodeInternal, "invalid response type from handler", nil)
 		return
@@ -542,7 +542,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 		ctx = WithIncomingHeaders(ctx, req.Headers())
 	}
 
-	var msg {{.Input.GoIdent.GoName}}
+	var msg {{$.QualifiedGoIdent .Input.GoIdent}}
 	if h.useJSON {
 		if err := protojson.Unmarshal(req.Data(), &msg); err != nil {
 			req.Error({{$.Service.GoName}}ErrCodeInvalidArgument, fmt.Sprintf("failed to decode request: %v", err), nil)

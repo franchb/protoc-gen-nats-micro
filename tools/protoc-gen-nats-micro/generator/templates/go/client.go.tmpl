@@ -6,19 +6,19 @@ type {{.Service.GoName}}NatsClientInterface interface {
 {{- $endpointOpts := GetEndpointOptions .}}
 {{- if not $endpointOpts.Skip}}
 {{- if IsUnary .}}
-  {{.GoName}}(context.Context, *{{.Input.GoIdent.GoName}}) (*{{.Output.GoIdent.GoName}}, error)
+  {{.GoName}}(context.Context, *{{$.QualifiedGoIdent .Input.GoIdent}}) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error)
 {{- if $endpointOpts.KVStore}}
-  Get{{.GoName}}FromKV(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error)
-  Put{{.GoName}}ToKV(ctx context.Context, key string, val *{{.Output.GoIdent.GoName}}) error
+  Get{{.GoName}}FromKV(ctx context.Context, key string) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error)
+  Put{{.GoName}}ToKV(ctx context.Context, key string, val *{{$.QualifiedGoIdent .Output.GoIdent}}) error
   Purge{{.GoName}}FromKV(ctx context.Context, key string) error
 {{- end}}
 {{- if $endpointOpts.ObjectStore}}
-  Get{{.GoName}}FromObjectStore(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error)
-  Put{{.GoName}}ToObjectStore(ctx context.Context, key string, val *{{.Output.GoIdent.GoName}}) error
+  Get{{.GoName}}FromObjectStore(ctx context.Context, key string) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error)
+  Put{{.GoName}}ToObjectStore(ctx context.Context, key string, val *{{$.QualifiedGoIdent .Output.GoIdent}}) error
 {{- end}}
 {{- else if IsServerStreaming .}}
 {{- if not (IsClientStreaming .)}}
-  {{.GoName}}(ctx context.Context, req *{{.Input.GoIdent.GoName}}) (*{{$.Service.GoName}}_{{.GoName}}_ClientStream, error)
+  {{.GoName}}(ctx context.Context, req *{{$.QualifiedGoIdent .Input.GoIdent}}) (*{{$.Service.GoName}}_{{.GoName}}_ClientStream, error)
 {{- end}}
 {{- end}}
 {{- if IsBidiStreaming .}}
@@ -124,7 +124,7 @@ func New{{.Service.GoName}}NatsClient(nc *nats.Conn, opts ...NatsClientOption) {
 {{- if IsUnary .}}
 // {{.GoName}} sends a {{.GoName}} request to the service via NATS.
 // Returns an error if the request fails or the service returns an error.
-func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{{.Input.GoIdent.GoName}}) (*{{.Output.GoIdent.GoName}}, error) {
+func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{{$.QualifiedGoIdent .Input.GoIdent}}) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error) {
   method := "{{.GoName}}"
   
   // Pointer to store response headers - stored in context so invoker can update it
@@ -139,7 +139,7 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{
     subject := c.subjectPrefix + ".{{ToSnakeCase .GoName}}"
     
     // Marshal request
-    typedReq, ok := request.(*{{.Input.GoIdent.GoName}})
+    typedReq, ok := request.(*{{$.QualifiedGoIdent .Input.GoIdent}})
     if !ok {
       return fmt.Errorf("invalid request type")
     }
@@ -187,7 +187,7 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{
     }
 
     // Unmarshal response
-    typedReply, ok := reply.(*{{.Output.GoIdent.GoName}})
+    typedReply, ok := reply.(*{{$.QualifiedGoIdent .Output.GoIdent}})
     if !ok {
       return fmt.Errorf("invalid reply type")
     }
@@ -200,7 +200,7 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{
     return err
   }
 
-  var resp {{.Output.GoIdent.GoName}}
+  var resp {{$.QualifiedGoIdent .Output.GoIdent}}
   
   // Execute through interceptor chain if configured
   var err error
@@ -222,7 +222,7 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{
 // Get{{.GoName}}FromKV reads a {{.GoName}} response directly from the KV Store.
 // The key should match the key_template pattern used when the response was persisted.
 // Requires the client to be created with WithNatsClientJetStream.
-func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromKV(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error) {
+func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromKV(ctx context.Context, key string) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error) {
   if c.js == nil {
     return nil, errors.New("JetStream not configured; use WithNatsClientJetStream to enable KV reads")
   }
@@ -234,7 +234,7 @@ func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromKV(ctx context.Contex
   if err != nil {
     return nil, fmt.Errorf("KV get failed for key %q: %w", key, err)
   }
-  var resp {{.Output.GoIdent.GoName}}
+  var resp {{$.QualifiedGoIdent .Output.GoIdent}}
   if c.useJSON {
     if err := protojson.Unmarshal(entry.Value(), &resp); err != nil {
       return nil, fmt.Errorf("failed to decode KV value: %w", err)
@@ -247,9 +247,9 @@ func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromKV(ctx context.Contex
   return &resp, nil
 }
 
-// Put{{.GoName}}ToKV writes a {{.Output.GoIdent.GoName}} directly to the KV Store.
+// Put{{.GoName}}ToKV writes a {{$.QualifiedGoIdent .Output.GoIdent}} directly to the KV Store.
 // Requires the client to be created with WithNatsClientJetStream.
-func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToKV(ctx context.Context, key string, val *{{.Output.GoIdent.GoName}}) error {
+func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToKV(ctx context.Context, key string, val *{{$.QualifiedGoIdent .Output.GoIdent}}) error {
   if c.js == nil {
     return errors.New("JetStream not configured; use WithNatsClientJetStream to enable KV writes")
   }
@@ -306,7 +306,7 @@ func (c *{{$.Service.GoName}}NatsClient) Purge{{.GoName}}FromKV(ctx context.Cont
 // Get{{.GoName}}FromObjectStore reads a {{.GoName}} response directly from the Object Store.
 // The key should match the key_template pattern used when the response was persisted.
 // Requires the client to be created with WithNatsClientJetStream.
-func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromObjectStore(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error) {
+func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromObjectStore(ctx context.Context, key string) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error) {
   if c.js == nil {
     return nil, errors.New("JetStream not configured; use WithNatsClientJetStream to enable Object Store reads")
   }
@@ -318,7 +318,7 @@ func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromObjectStore(ctx conte
   if err != nil {
     return nil, fmt.Errorf("Object Store get failed for key %q: %w", key, err)
   }
-  var resp {{.Output.GoIdent.GoName}}
+  var resp {{$.QualifiedGoIdent .Output.GoIdent}}
   if c.useJSON {
     if err := protojson.Unmarshal(data, &resp); err != nil {
       return nil, fmt.Errorf("failed to decode Object Store value: %w", err)
@@ -331,9 +331,9 @@ func (c *{{$.Service.GoName}}NatsClient) Get{{.GoName}}FromObjectStore(ctx conte
   return &resp, nil
 }
 
-// Put{{.GoName}}ToObjectStore writes a {{.Output.GoIdent.GoName}} directly to the Object Store.
+// Put{{.GoName}}ToObjectStore writes a {{$.QualifiedGoIdent .Output.GoIdent}} directly to the Object Store.
 // Requires the client to be created with WithNatsClientJetStream.
-func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToObjectStore(ctx context.Context, key string, val *{{.Output.GoIdent.GoName}}) error {
+func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToObjectStore(ctx context.Context, key string, val *{{$.QualifiedGoIdent .Output.GoIdent}}) error {
   if c.js == nil {
     return errors.New("JetStream not configured; use WithNatsClientJetStream to enable Object Store writes")
   }
@@ -370,12 +370,12 @@ type {{$.Service.GoName}}_{{.GoName}}_ClientStream struct {
 
 // Recv blocks until the next response message arrives from the server.
 // Returns an error containing "EOF" when the stream is complete.
-func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Recv(ctx context.Context) (*{{.Output.GoIdent.GoName}}, error) {
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Recv(ctx context.Context) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error) {
   msg, err := s.receiver.Recv(ctx)
   if err != nil {
     return nil, err
   }
-  var resp {{.Output.GoIdent.GoName}}
+  var resp {{$.QualifiedGoIdent .Output.GoIdent}}
   if s.useJSON {
     if err := protojson.Unmarshal(msg.Data, &resp); err != nil {
       return nil, fmt.Errorf("failed to decode stream message: %w", err)
@@ -440,7 +440,7 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) RecvToFile(ctx context.C
 
 // {{.GoName}} initiates a server-streaming RPC call.
 // Returns a stream that yields responses from the server.
-func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{{.Input.GoIdent.GoName}}) (*{{$.Service.GoName}}_{{.GoName}}_ClientStream, error) {
+func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{{$.QualifiedGoIdent .Input.GoIdent}}) (*{{$.Service.GoName}}_{{.GoName}}_ClientStream, error) {
   subject := c.subjectPrefix + ".{{ToSnakeCase .GoName}}"
 
   var data []byte
@@ -503,7 +503,7 @@ type {{$.Service.GoName}}_{{.GoName}}_ClientStream struct {
 }
 
 // Send sends a message to the server.
-func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Send(msg *{{.Input.GoIdent.GoName}}) error {
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Send(msg *{{$.QualifiedGoIdent .Input.GoIdent}}) error {
   var data []byte
   var err error
   if s.useJSON {
@@ -528,12 +528,12 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Send(msg *{{.Input.GoIde
 }
 
 // Recv blocks until the next response arrives from the server.
-func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Recv(ctx context.Context) (*{{.Output.GoIdent.GoName}}, error) {
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Recv(ctx context.Context) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error) {
   natsMsg, err := s.receiver.Recv(ctx)
   if err != nil {
     return nil, err
   }
-  var resp {{.Output.GoIdent.GoName}}
+  var resp {{$.QualifiedGoIdent .Output.GoIdent}}
   if s.useJSON {
     if err := protojson.Unmarshal(natsMsg.Data, &resp); err != nil {
       return nil, fmt.Errorf("failed to decode stream message: %w", err)
@@ -613,7 +613,7 @@ type {{$.Service.GoName}}_{{.GoName}}_ClientStream struct {
 }
 
 // Send sends a message to the server.
-func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Send(msg *{{.Input.GoIdent.GoName}}) error {
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Send(msg *{{$.QualifiedGoIdent .Input.GoIdent}}) error {
   var data []byte
   var err error
   if s.useJSON {
@@ -638,7 +638,7 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Send(msg *{{.Input.GoIde
 }
 
 // CloseAndRecv signals end of client messages and waits for the server's response.
-func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context.Context) (*{{.Output.GoIdent.GoName}}, error) {
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context.Context) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error) {
   // Send end-of-stream marker
   m := &nats.Msg{
     Subject: s.sendTo,
@@ -669,7 +669,7 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context
     }
   }
 
-  var resp {{.Output.GoIdent.GoName}}
+  var resp {{$.QualifiedGoIdent .Output.GoIdent}}
   if s.useJSON {
     if err := protojson.Unmarshal(natsMsg.Data, &resp); err != nil {
       return nil, fmt.Errorf("failed to decode response: %w", err)

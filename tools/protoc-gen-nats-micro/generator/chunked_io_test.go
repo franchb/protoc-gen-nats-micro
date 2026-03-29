@@ -244,9 +244,15 @@ func TestGenerateFileEmitsChunkedHelpersForValidStreamingMethods(t *testing.T) {
 func newTestPlugin(t *testing.T, file *descriptorpb.FileDescriptorProto) (*protogen.Plugin, *protogen.File) {
 	t.Helper()
 
+	return newTestPluginWithFiles(t, file.GetName(), file)
+}
+
+func newTestPluginWithFiles(t *testing.T, fileToGenerate string, files ...*descriptorpb.FileDescriptorProto) (*protogen.Plugin, *protogen.File) {
+	t.Helper()
+
 	req := &pluginpb.CodeGeneratorRequest{
-		FileToGenerate: []string{file.GetName()},
-		ProtoFile:      []*descriptorpb.FileDescriptorProto{file},
+		FileToGenerate: []string{fileToGenerate},
+		ProtoFile:      files,
 	}
 
 	gen, err := protogen.Options{}.New(req)
@@ -254,9 +260,9 @@ func newTestPlugin(t *testing.T, file *descriptorpb.FileDescriptorProto) (*proto
 		t.Fatalf("protogen.Options.New() error = %v", err)
 	}
 
-	target := gen.FilesByPath[file.GetName()]
+	target := gen.FilesByPath[fileToGenerate]
 	if target == nil {
-		t.Fatalf("failed to resolve generated file %q", file.GetName())
+		t.Fatalf("failed to resolve generated file %q", fileToGenerate)
 	}
 
 	return gen, target

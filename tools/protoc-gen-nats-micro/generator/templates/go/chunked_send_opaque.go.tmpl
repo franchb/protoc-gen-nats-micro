@@ -21,7 +21,7 @@ import (
 
 // SendBytes sends a single payload chunk to the server.
 func (s *{{$svc.GoName}}_{{.GoName}}_ClientStream) SendBytes(data []byte) error {
-  msg := &{{.Input.GoIdent.GoName}}{}
+  msg := &{{$.QualifiedGoIdent .Input.GoIdent}}{}
   msg.Set{{$endpointOpts.ChunkedIO.GoFieldName}}(data)
   return s.Send(msg)
 }
