@@ -103,6 +103,11 @@ class _WithServerInterceptor(RegisterOption):
         self.interceptor = interceptor
 
 
+class _WithJetStream(RegisterOption):
+    def __init__(self, js: Any):
+        self.js = js
+
+
 def with_subject_prefix(prefix: str) -> RegisterOption:
     """Override the subject prefix for all endpoints"""
     return _WithSubjectPrefix(prefix)
@@ -143,6 +148,11 @@ def with_server_interceptor(interceptor: UnaryServerInterceptor) -> RegisterOpti
     return _WithServerInterceptor(interceptor)
 
 
+def with_jetstream(js: Any) -> RegisterOption:
+    """Provide a JetStream context for KV/ObjectStore operations"""
+    return _WithJetStream(js)
+
+
 # Client options
 class NatsClientOption:
     """Base class for client options"""
@@ -159,6 +169,11 @@ class _WithClientInterceptor(NatsClientOption):
         self.interceptor = interceptor
 
 
+class _WithClientJetStream(NatsClientOption):
+    def __init__(self, js: Any):
+        self.js = js
+
+
 def with_client_subject_prefix(prefix: str) -> NatsClientOption:
     """Override the subject prefix for client calls"""
     return _WithClientSubjectPrefix(prefix)
@@ -167,6 +182,11 @@ def with_client_subject_prefix(prefix: str) -> NatsClientOption:
 def with_client_interceptor(interceptor: UnaryClientInterceptor) -> NatsClientOption:
     """Add a client interceptor"""
     return _WithClientInterceptor(interceptor)
+
+
+def with_client_jetstream(js: Any) -> NatsClientOption:
+    """Provide a JetStream context for client-side KV/ObjectStore reads"""
+    return _WithClientJetStream(js)
 
 
 def chain_server_interceptors(

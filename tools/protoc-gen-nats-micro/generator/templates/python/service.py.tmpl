@@ -56,6 +56,7 @@ async def register_{{ToSnakeCase $serviceName}}(
         {{- end}}
     }
     interceptors: List[UnaryServerInterceptor] = []
+    js_context: Any = None  # Optional JetStream context
     
     # Apply runtime options
     for opt in opts:
@@ -75,6 +76,8 @@ async def register_{{ToSnakeCase $serviceName}}(
             metadata = {**metadata, **opt.metadata}
         elif isinstance(opt, _WithServerInterceptor):
             interceptors.append(opt.interceptor)
+        elif isinstance(opt, _WithJetStream):
+            js_context = opt.js
     
     # Chain interceptors
     chain = chain_server_interceptors(interceptors)
@@ -89,6 +92,45 @@ async def register_{{ToSnakeCase $serviceName}}(
     
     # Create service
     service = await micro.add_service(nc, config)
+    
+    # Auto-create KV and Object Store buckets if JetStream is available
+    if js_context is not None:
+        {{- range .Service.Methods}}
+        {{- $eopts := GetEndpointOptions .}}
+        {{- if $eopts.KVStore}}
+        # Auto-create KV bucket "{{$eopts.KVStore.Bucket}}" for {{.GoName}}
+        try:
+            await js_context.create_key_value(nats.js.api.KeyValueConfig(
+                bucket="{{$eopts.KVStore.Bucket}}",
+                {{- if $eopts.KVStore.Description}}
+                description="{{$eopts.KVStore.Description}}",
+                {{- end}}
+                {{- if $eopts.KVStore.MaxHistory}}
+                history={{$eopts.KVStore.MaxHistory}},
+                {{- end}}
+                {{- if $eopts.KVStore.TTL.Nanoseconds}}
+                ttl={{$eopts.KVStore.TTL.Seconds}},
+                {{- end}}
+            ))
+        except Exception as e:
+            logging.warning(f"[nats-micro] WARN: failed to create KV bucket '{{$eopts.KVStore.Bucket}}': {e}")
+        {{- end}}
+        {{- if $eopts.ObjectStore}}
+        # Auto-create Object Store bucket "{{$eopts.ObjectStore.Bucket}}" for {{.GoName}}
+        try:
+            await js_context.create_object_store(nats.js.api.ObjectStoreConfig(
+                bucket="{{$eopts.ObjectStore.Bucket}}",
+                {{- if $eopts.ObjectStore.Description}}
+                description="{{$eopts.ObjectStore.Description}}",
+                {{- end}}
+                {{- if $eopts.ObjectStore.TTL.Nanoseconds}}
+                ttl={{$eopts.ObjectStore.TTL.Seconds}},
+                {{- end}}
+            ))
+        except Exception as e:
+            logging.warning(f"[nats-micro] WARN: failed to create Object Store bucket '{{$eopts.ObjectStore.Bucket}}': {e}")
+        {{- end}}
+        {{- end}}
     
     {{- range .Service.Methods}}
     {{- $methodOptions := GetEndpointOptions .}}
@@ -147,6 +189,36 @@ async def register_{{ToSnakeCase $serviceName}}(
             response_data = MessageToJson(response_msg).encode()
             {{- else}}
             response_data = response_msg.SerializeToString()
+            {{- end}}
+            
+            {{- /* KV Store persistence */}}
+            {{- if $methodOptions.KVStore}}
+            {{- if not $methodOptions.KVStore.ClientOnly}}
+            # Auto-persist response to KV Store (bucket: "{{$methodOptions.KVStore.Bucket}}")
+            if js_context is not None:
+                try:
+                    kv_key = {{ResolveKeyTemplatePy $methodOptions.KVStore.KeyTemplate .}}
+                    kv = await js_context.key_value("{{$methodOptions.KVStore.Bucket}}")
+                    await kv.put(kv_key, response_data)
+                except Exception as kv_err:
+                    import logging
+                    logging.warning(f"[nats-micro] KV persist failed for {{.GoName}}: {kv_err}")
+            {{- end}}
+            {{- end}}
+            
+            {{- /* Object Store persistence */}}
+            {{- if $methodOptions.ObjectStore}}
+            {{- if not $methodOptions.ObjectStore.ClientOnly}}
+            # Auto-persist response to Object Store (bucket: "{{$methodOptions.ObjectStore.Bucket}}")
+            if js_context is not None:
+                try:
+                    obj_key = {{ResolveKeyTemplatePy $methodOptions.ObjectStore.KeyTemplate .}}
+                    obj = await js_context.object_store("{{$methodOptions.ObjectStore.Bucket}}")
+                    await obj.put(obj_key, response_data)
+                except Exception as obj_err:
+                    import logging
+                    logging.warning(f"[nats-micro] Object Store persist failed for {{.GoName}}: {obj_err}")
+            {{- end}}
             {{- end}}
             
             # Add response headers from handler/interceptors

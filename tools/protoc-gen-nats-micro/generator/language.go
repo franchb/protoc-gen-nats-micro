@@ -121,7 +121,7 @@ func FuncMap() template.FuncMap {
 		"IsClientStreaming": IsClientStreaming,
 		"IsBidiStreaming":   IsBidiStreaming,
 		"IsUnary":           IsUnary,
-		// Shared template field resolution helpers
+		// KV/ObjectStore key template resolution
 		"ResolveKeyTemplateGo": ResolveKeyTemplateGo,
 		"ResolveKeyTemplateTS": ResolveKeyTemplateTS,
 		"ResolveKeyTemplatePy": ResolveKeyTemplatePy,

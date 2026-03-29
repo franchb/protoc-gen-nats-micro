@@ -43,6 +43,7 @@ Existing NATS code generation tools like [nRPC](https://github.com/nats-rpc/nrpc
 - **Standard tooling** - Works with `buf`, `protoc`, existing workflows
 - **Automatic service discovery** - Via NATS, no external dependencies
 - **Built-in load balancing** - NATS queue groups
+- **KV/Object Store helpers** - Auto-persist RPC responses to JetStream KV and Object Store
 - **Backpressure controls** - Per-endpoint pending limits and optional queue-group disable
 - **API versioning** - Subject prefix isolation
 - **Chunked blob helpers** - Go `io.Reader` / `io.Writer` helpers for streaming large payloads
@@ -825,10 +826,10 @@ task --list
 Streaming RPC is supported across the generator today.
 
 - Use [Streaming RPC](docs/guide/streaming.md) for typed server-streaming, client-streaming, and bidi helpers over NATS.
+- Use [KV & Object Store](docs/guide/kv-object-store.md) when you want post-RPC persistence of whole protobuf messages.
 - Use `chunked_io` on simple Go streaming blob methods when you want generated `io.Reader` / `io.Writer` helpers on top of streaming.
-- Keep NATS ObjectStore integration in application code: open the object yourself, then pass its reader or writer into the generated streaming helpers.
 
-For larger payload transfer, prefer a streaming RPC with a simple `bytes` chunk message and wire it to ObjectStore at the application boundary.
+For larger payload transfer, prefer a streaming RPC with a simple `bytes` chunk message instead of overloading `object_store`.
 
 ## Contributing
 

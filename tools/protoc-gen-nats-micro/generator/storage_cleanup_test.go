@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
-func TestOptionsProtoDoesNotExposeGeneratedStorageAnnotations(t *testing.T) {
+func TestOptionsProtoExposesGeneratedStorageAnnotations(t *testing.T) {
 	root := repoRootFromTest(t)
 	optionsProtoPath := filepath.Join(root, "extensions", "proto", "natsmicro", "options.proto")
 
@@ -19,19 +19,19 @@ func TestOptionsProtoDoesNotExposeGeneratedStorageAnnotations(t *testing.T) {
 	}
 
 	text := string(data)
-	for _, forbidden := range []string{
+	for _, required := range []string{
 		"message KVStoreOptions",
 		"message ObjectStoreOptions",
 		"KVStoreOptions kv_store = 50003;",
 		"ObjectStoreOptions object_store = 50004;",
 	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("options.proto still exposes generated storage surface %q", forbidden)
+		if !strings.Contains(text, required) {
+			t.Fatalf("options.proto is missing generated storage surface %q", required)
 		}
 	}
 }
 
-func TestGenerateSharedOmitsJetStreamStorageHooks(t *testing.T) {
+func TestGenerateSharedIncludesJetStreamStorageHooks(t *testing.T) {
 	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
 		messageDescriptor("DownloadRequest", stringField("id", 1)),
 		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
@@ -58,14 +58,14 @@ func TestGenerateSharedOmitsJetStreamStorageHooks(t *testing.T) {
 		t.Fatal("failed to find generated shared Go file")
 	}
 
-	for _, forbidden := range []string{
+	for _, required := range []string{
 		"jetstream.JetStream",
 		"WithJetStream(",
 		"WithNatsClientJetStream(",
 		"KV/ObjectStore",
 	} {
-		if strings.Contains(sharedFile, forbidden) {
-			t.Fatalf("generated shared Go file still contains storage hook %q:\n%s", forbidden, sharedFile)
+		if !strings.Contains(sharedFile, required) {
+			t.Fatalf("generated shared Go file is missing storage hook %q:\n%s", required, sharedFile)
 		}
 	}
 }

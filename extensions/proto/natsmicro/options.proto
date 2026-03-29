@@ -77,6 +77,56 @@ message EndpointOptions {
   int32 pending_bytes_limit = 6;
 }
 
+// KV Store options for RPC methods
+// When set, the server handler automatically persists the response
+// into a NATS JetStream KV bucket after processing.
+// The bucket is auto-created during service registration if it doesn't exist.
+message KVStoreOptions {
+  // KV bucket name (e.g., "user_profiles")
+  string bucket = 1;
+
+  // Key template with {field} placeholders resolved from the request message
+  // e.g., "user.{id}" extracts the 'id' field from the request
+  string key_template = 2;
+
+  // TTL for entries — auto-expire cached data after this duration (optional)
+  google.protobuf.Duration ttl = 3;
+
+  // Human-readable description for the bucket (optional)
+  string description = 4;
+
+  // Number of revisions to keep per key (optional, default 1, max 64)
+  // Set > 1 to enable revision history for audit trails or versioned data
+  int32 max_history = 5;
+
+  // If true, skip server-side auto-persist — only generate client read/write
+  // methods Use this when you want direct client access to KV without RPC
+  // involvement
+  bool client_only = 6;
+}
+
+// Object Store options for RPC methods
+// When set, the handler stores/retrieves large binary objects
+// from a NATS JetStream Object Store bucket.
+// The bucket is auto-created during service registration if it doesn't exist.
+message ObjectStoreOptions {
+  // Object store bucket name (e.g., "firmware_binaries")
+  string bucket = 1;
+
+  // Key template with {field} placeholders (optional, defaults to method name)
+  string key_template = 2;
+
+  // TTL for objects — auto-expire after this duration (optional)
+  google.protobuf.Duration ttl = 3;
+
+  // Human-readable description for the bucket (optional)
+  string description = 4;
+
+  // If true, skip server-side auto-persist — only generate client read/write
+  // methods
+  bool client_only = 5;
+}
+
 // Streaming options for fine-tuning streaming RPC behavior
 message StreamOptions {
   // Max concurrent in-flight messages (backpressure, 0 = unlimited)
@@ -101,6 +151,8 @@ extend google.protobuf.ServiceOptions { ServiceOptions service = 50001; }
 
 extend google.protobuf.MethodOptions {
   EndpointOptions endpoint = 50002;
+  KVStoreOptions kv_store = 50003;
+  ObjectStoreOptions object_store = 50004;
   StreamOptions stream = 50005;
   ChunkedIOOptions chunked_io = 50006;
 }

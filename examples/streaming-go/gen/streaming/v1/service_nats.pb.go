@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/nats-io/nats.go/micro"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -224,6 +225,11 @@ func RegisterStreamDemoServiceHandlers(nc *nats.Conn, impl StreamDemoServiceNats
 		serviceTimeout: cfg.timeout,
 		useJSON:        false,
 		interceptor:    chainedInterceptor,
+		js:             cfg.js,
+	}
+
+	// Auto-create KV and Object Store buckets if JetStream is available
+	if cfg.js != nil {
 	}
 
 	// Map of endpoint names to their handlers
@@ -326,6 +332,7 @@ type streamDemoServiceHandlers struct {
 	serviceTimeout time.Duration          // Default timeout for all endpoints
 	useJSON        bool                   // Use JSON encoding instead of binary protobuf
 	interceptor    UnaryServerInterceptor // Chained interceptors
+	js             jetstream.JetStream    // Optional JetStream context for KV/ObjectStore
 }
 
 func (h *streamDemoServiceHandlers) Ping(req micro.Request) {
@@ -756,6 +763,7 @@ type StreamDemoServiceNatsClient struct {
 	subjectPrefix string
 	useJSON       bool                   // Use JSON encoding instead of binary protobuf
 	interceptor   UnaryClientInterceptor // Chained interceptors
+	js            jetstream.JetStream    // Optional JetStream for KV/ObjectStore reads
 }
 
 // NewStreamDemoServiceNatsClient creates a new NATS client for StreamDemoService.
@@ -779,6 +787,7 @@ func NewStreamDemoServiceNatsClient(nc *nats.Conn, opts ...NatsClientOption) Str
 		subjectPrefix: cfg.subjectPrefix,
 		useJSON:       false,
 		interceptor:   chainedInterceptor,
+		js:            cfg.js,
 	}
 	return c
 }

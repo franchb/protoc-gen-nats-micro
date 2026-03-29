@@ -17,6 +17,14 @@ export interface I{{.Service.GoName}}NatsClient {
 {{- if not $endpointOpts.Skip}}
 {{- if IsUnary .}}
   {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}, opts?: RequestOptions): Promise<pb.{{.Output.GoIdent.GoName}}>;
+{{- if $endpointOpts.KVStore}}
+  get{{.GoName}}FromKV(key: string): Promise<pb.{{.Output.GoIdent.GoName}}>;
+  put{{.GoName}}ToKV(key: string, val: pb.{{.Output.GoIdent.GoName}}): Promise<void>;
+{{- end}}
+{{- if $endpointOpts.ObjectStore}}
+  get{{.GoName}}FromObjectStore(key: string): Promise<pb.{{.Output.GoIdent.GoName}}>;
+  put{{.GoName}}ToObjectStore(key: string, val: pb.{{.Output.GoIdent.GoName}}): Promise<void>;
+{{- end}}
 {{- else if IsServerStreaming .}}
 {{- if not (IsClientStreaming .)}}
   {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>>;
@@ -34,6 +42,7 @@ export interface {{.Service.GoName}}ClientOptions {
   subjectPrefix?: string;
   timeout?: number; // milliseconds
   clientInterceptors?: UnaryClientInterceptor[]; // Client-side interceptors
+  jetstream?: any; // Optional JetStream client for KV/ObjectStore reads
 }
 
 /**
@@ -45,6 +54,7 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
   private readonly subjectPrefix: string;
   private readonly timeout?: number;
   private readonly interceptor?: UnaryClientInterceptor;
+  private readonly js?: any; // Optional JetStream client
 
   /**
    * Create a new NATS client for {{.Service.GoName}}
@@ -55,6 +65,7 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
     this.nc = nc;
     this.subjectPrefix = options?.subjectPrefix || '{{.Options.SubjectPrefix}}';
     this.timeout = options?.timeout;
+    this.js = options?.jetstream;
     
     // Chain client interceptors
     this.interceptor = options?.clientInterceptors
@@ -129,6 +140,76 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
     
     return response;
   }
+
+{{- if $endpointOpts.KVStore}}
+
+  /**
+   * Read a cached {{.GoName}} response directly from the KV Store.
+   * @param key - The KV key matching the key_template pattern
+   * @throws Error if JetStream is not configured or the key is not found
+   */
+  async get{{.GoName}}FromKV(key: string): Promise<pb.{{.Output.GoIdent.GoName}}> {
+    if (!this.js) {
+      throw new Error('JetStream not configured; pass jetstream option to enable KV reads');
+    }
+    const kv = await this.js.views.kv('{{$endpointOpts.KVStore.Bucket}}');
+    const entry = await kv.get(key);
+    if (!entry || !entry.value) {
+      throw new Error(`KV key "${key}" not found in bucket "{{$endpointOpts.KVStore.Bucket}}"`);
+    }
+    return pb.{{.Output.GoIdent.GoName}}.fromBinary(entry.value);
+  }
+
+  /**
+   * Write a {{.Output.GoIdent.GoName}} directly to the KV Store.
+   * @param key - The KV key
+   * @param val - The value to store
+   * @throws Error if JetStream is not configured
+   */
+  async put{{.GoName}}ToKV(key: string, val: pb.{{.Output.GoIdent.GoName}}): Promise<void> {
+    if (!this.js) {
+      throw new Error('JetStream not configured; pass jetstream option to enable KV writes');
+    }
+    const kv = await this.js.views.kv('{{$endpointOpts.KVStore.Bucket}}');
+    const data = pb.{{.Output.GoIdent.GoName}}.toBinary(val);
+    await kv.put(key, data);
+  }
+{{- end}}
+
+{{- if $endpointOpts.ObjectStore}}
+
+  /**
+   * Read a cached {{.GoName}} response directly from the Object Store.
+   * @param key - The object key matching the key_template pattern
+   * @throws Error if JetStream is not configured or the key is not found
+   */
+  async get{{.GoName}}FromObjectStore(key: string): Promise<pb.{{.Output.GoIdent.GoName}}> {
+    if (!this.js) {
+      throw new Error('JetStream not configured; pass jetstream option to enable Object Store reads');
+    }
+    const obj = await this.js.views.os('{{$endpointOpts.ObjectStore.Bucket}}');
+    const data = await obj.getBlob(key);
+    if (!data) {
+      throw new Error(`Object "${key}" not found in bucket "{{$endpointOpts.ObjectStore.Bucket}}"`);
+    }
+    return pb.{{.Output.GoIdent.GoName}}.fromBinary(data);
+  }
+
+  /**
+   * Write a {{.Output.GoIdent.GoName}} directly to the Object Store.
+   * @param key - The object key
+   * @param val - The value to store
+   * @throws Error if JetStream is not configured
+   */
+  async put{{.GoName}}ToObjectStore(key: string, val: pb.{{.Output.GoIdent.GoName}}): Promise<void> {
+    if (!this.js) {
+      throw new Error('JetStream not configured; pass jetstream option to enable Object Store writes');
+    }
+    const obj = await this.js.views.os('{{$endpointOpts.ObjectStore.Bucket}}');
+    const data = pb.{{.Output.GoIdent.GoName}}.toBinary(val);
+    await obj.putBlob({ name: key }, data);
+  }
+{{- end}}
 
 {{- end}}{{/* end IsUnary */}}
 
