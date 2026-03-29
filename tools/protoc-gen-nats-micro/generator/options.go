@@ -104,12 +104,16 @@ type EndpointOptions struct {
 
 // KVStoreOpts contains KV store persistence options for a method
 type KVStoreOpts struct {
-	Bucket      string        // KV bucket name
-	KeyTemplate string        // Key template with {field} placeholders
-	TTL         time.Duration // TTL for entries (0 = no expiry)
-	Description string        // Human-readable bucket description
-	MaxHistory  int32         // Revisions per key (0 = default 1, max 64)
-	ClientOnly  bool          // Skip server auto-persist; only generate client read/write
+	Bucket         string            // KV bucket name
+	KeyTemplate    string            // Key template with {field} placeholders
+	TTL            time.Duration     // TTL for entries (0 = no expiry)
+	Description    string            // Human-readable bucket description
+	MaxHistory     int32             // Revisions per key (0 = default 1, max 64)
+	ClientOnly     bool              // Skip server auto-persist; only generate client read/write
+	Metadata       map[string]string // Bucket metadata
+	LimitMarkerTTL time.Duration     // TTL for delete markers used by TTL expiration
+	KeyTTL         time.Duration     // TTL for newly created keys
+	PurgeTTL       time.Duration     // TTL for purge markers
 }
 
 // ObjectStoreOpts contains object store options for a method
@@ -166,9 +170,19 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 			Description: kvOpts.Description,
 			MaxHistory:  kvOpts.MaxHistory,
 			ClientOnly:  kvOpts.ClientOnly,
+			Metadata:    kvOpts.Metadata,
 		}
 		if kvOpts.Ttl != nil {
 			kv.TTL = kvOpts.Ttl.AsDuration()
+		}
+		if kvOpts.LimitMarkerTtl != nil {
+			kv.LimitMarkerTTL = kvOpts.LimitMarkerTtl.AsDuration()
+		}
+		if kvOpts.KeyTtl != nil {
+			kv.KeyTTL = kvOpts.KeyTtl.AsDuration()
+		}
+		if kvOpts.PurgeTtl != nil {
+			kv.PurgeTTL = kvOpts.PurgeTtl.AsDuration()
 		}
 		opts.KVStore = kv
 	}

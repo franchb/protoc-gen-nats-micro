@@ -103,6 +103,20 @@ message KVStoreOptions {
   // methods Use this when you want direct client access to KV without RPC
   // involvement
   bool client_only = 6;
+
+  // Bucket-specific metadata (optional).
+  map<string, string> metadata = 7;
+
+  // How long to keep delete markers for TTL-based expirations.
+  // Required for per-key TTL support.
+  google.protobuf.Duration limit_marker_ttl = 8;
+
+  // TTL applied when the generator creates a new KV key.
+  // Existing keys retain their current TTL semantics.
+  google.protobuf.Duration key_ttl = 9;
+
+  // TTL applied to generated KV purge helpers so delete markers expire.
+  google.protobuf.Duration purge_ttl = 10;
 }
 
 // Object Store options for RPC methods

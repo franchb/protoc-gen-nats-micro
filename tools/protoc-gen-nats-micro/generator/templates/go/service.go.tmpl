@@ -125,20 +125,30 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		{{- $eopts := GetEndpointOptions .}}
 		{{- if $eopts.KVStore}}
 		// Auto-create KV bucket "{{$eopts.KVStore.Bucket}}" for {{.GoName}}
-		if _, err := cfg.js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
-			Bucket:      "{{$eopts.KVStore.Bucket}}",
-			{{- if $eopts.KVStore.Description}}
-			Description: "{{$eopts.KVStore.Description}}",
-			{{- end}}
-			{{- if $eopts.KVStore.MaxHistory}}
-			MaxHistory:  {{$eopts.KVStore.MaxHistory}},
-			{{- end}}
-			{{- if $eopts.KVStore.TTL.Nanoseconds}}
-			TTL:         {{$eopts.KVStore.TTL.Nanoseconds}} * time.Nanosecond,
-			{{- end}}
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create KV bucket \"{{$eopts.KVStore.Bucket}}\": %v\n", err)
-		}
+			if _, err := cfg.js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
+				Bucket:      "{{$eopts.KVStore.Bucket}}",
+				{{- if $eopts.KVStore.Description}}
+				Description: "{{$eopts.KVStore.Description}}",
+				{{- end}}
+				{{- if $eopts.KVStore.MaxHistory}}
+				MaxHistory:  {{$eopts.KVStore.MaxHistory}},
+				{{- end}}
+				{{- if $eopts.KVStore.TTL.Nanoseconds}}
+				TTL:         {{$eopts.KVStore.TTL.Nanoseconds}} * time.Nanosecond,
+				{{- end}}
+				{{- if $eopts.KVStore.LimitMarkerTTL.Nanoseconds}}
+				LimitMarkerTTL: {{$eopts.KVStore.LimitMarkerTTL.Nanoseconds}} * time.Nanosecond,
+				{{- end}}
+				{{- if $eopts.KVStore.Metadata}}
+				Metadata: map[string]string{
+					{{- range $key, $value := $eopts.KVStore.Metadata}}
+					"{{$key}}": "{{$value}}",
+					{{- end}}
+				},
+				{{- end}}
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create KV bucket \"{{$eopts.KVStore.Bucket}}\": %v\n", err)
+			}
 		{{- end}}
 		{{- if $eopts.ObjectStore}}
 		// Auto-create Object Store bucket "{{$eopts.ObjectStore.Bucket}}" for {{.GoName}}
@@ -247,6 +257,30 @@ type {{ToLowerFirst .Service.GoName}}Handlers struct {
 	useJSON        bool                       // Use JSON encoding instead of binary protobuf
 	interceptor    UnaryServerInterceptor     // Chained interceptors
 	js             jetstream.JetStream        // Optional JetStream context for KV/ObjectStore
+}
+
+func put{{.Service.GoName}}KVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, keyTTL time.Duration) error {
+	if keyTTL <= 0 {
+		_, err := kv.Put(ctx, key, data)
+		return err
+	}
+
+	if _, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL)); err == nil {
+		return nil
+	} else if !errors.Is(err, jetstream.ErrKeyExists) {
+		return err
+	}
+
+	entry, err := kv.Get(ctx, key)
+	if err != nil {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			_, err = kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
+		}
+		return err
+	}
+
+	_, err = kv.Update(ctx, key, data, entry.Revision())
+	return err
 }
 
 {{range .Service.Methods -}}
@@ -370,15 +404,15 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	// Auto-persist response to KV Store (bucket: "{{$endpointOpts.KVStore.Bucket}}")
 	if h.js != nil {
 		kvKey := {{ResolveKeyTemplateGo $endpointOpts.KVStore.KeyTemplate .}}
-		kv, kvErr := h.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
-		if kvErr != nil {
-			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: KV bucket \"{{$endpointOpts.KVStore.Bucket}}\" not available for {{.GoName}}: %v\n", kvErr)
-		} else {
-			if _, kvErr = kv.Put(ctx, kvKey, data); kvErr != nil {
-				fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to persist {{.GoName}} response to KV: %v\n", kvErr)
+			kv, kvErr := h.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
+			if kvErr != nil {
+				fmt.Fprintf(os.Stderr, "[nats-micro] WARN: KV bucket \"{{$endpointOpts.KVStore.Bucket}}\" not available for {{.GoName}}: %v\n", kvErr)
+			} else {
+				if kvErr = put{{$.Service.GoName}}KVValue(ctx, kv, kvKey, data, {{$endpointOpts.KVStore.KeyTTL.Nanoseconds}} * time.Nanosecond); kvErr != nil {
+					fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to persist {{.GoName}} response to KV: %v\n", kvErr)
+				}
 			}
 		}
-	}
 	{{- end}}
 	{{- end}}
 

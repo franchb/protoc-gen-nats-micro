@@ -10,6 +10,7 @@ type {{.Service.GoName}}NatsClientInterface interface {
 {{- if $endpointOpts.KVStore}}
   Get{{.GoName}}FromKV(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error)
   Put{{.GoName}}ToKV(ctx context.Context, key string, val *{{.Output.GoIdent.GoName}}) error
+  Purge{{.GoName}}FromKV(ctx context.Context, key string) error
 {{- end}}
 {{- if $endpointOpts.ObjectStore}}
   Get{{.GoName}}FromObjectStore(ctx context.Context, key string) (*{{.Output.GoIdent.GoName}}, error)
@@ -40,6 +41,30 @@ type {{.Service.GoName}}NatsClient struct {
   useJSON       bool                       // Use JSON encoding instead of binary protobuf
   interceptor   UnaryClientInterceptor     // Chained interceptors
   js            jetstream.JetStream        // Optional JetStream for KV/ObjectStore reads
+}
+
+func put{{.Service.GoName}}ClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, keyTTL time.Duration) error {
+  if keyTTL <= 0 {
+    _, err := kv.Put(ctx, key, data)
+    return err
+  }
+
+  if _, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL)); err == nil {
+    return nil
+  } else if !errors.Is(err, jetstream.ErrKeyExists) {
+    return err
+  }
+
+  entry, err := kv.Get(ctx, key)
+  if err != nil {
+    if errors.Is(err, jetstream.ErrKeyNotFound) {
+      _, err = kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
+    }
+    return err
+  }
+
+  _, err = kv.Update(ctx, key, data, entry.Revision())
+  return err
 }
 
 // New{{.Service.GoName}}NatsClient creates a new NATS client for {{.Service.GoName}}.
@@ -217,8 +242,28 @@ func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToKV(ctx context.Context,
   if err != nil {
     return fmt.Errorf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %w", err)
   }
-  if _, err := kv.Put(ctx, key, data); err != nil {
+  if err := put{{$.Service.GoName}}ClientKVValue(ctx, kv, key, data, {{$endpointOpts.KVStore.KeyTTL.Nanoseconds}} * time.Nanosecond); err != nil {
     return fmt.Errorf("KV put failed for key %q: %w", key, err)
+  }
+  return nil
+}
+
+// Purge{{.GoName}}FromKV removes a key directly from the KV Store.
+// Requires the client to be created with WithNatsClientJetStream.
+func (c *{{$.Service.GoName}}NatsClient) Purge{{.GoName}}FromKV(ctx context.Context, key string) error {
+  if c.js == nil {
+    return errors.New("JetStream not configured; use WithNatsClientJetStream to enable KV purges")
+  }
+  kv, err := c.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
+  if err != nil {
+    return fmt.Errorf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %w", err)
+  }
+  {{- if $endpointOpts.KVStore.PurgeTTL.Nanoseconds}}
+  if err := kv.Purge(ctx, key, jetstream.PurgeTTL({{$endpointOpts.KVStore.PurgeTTL.Nanoseconds}} * time.Nanosecond)); err != nil {
+  {{- else}}
+  if err := kv.Purge(ctx, key); err != nil {
+  {{- end}}
+    return fmt.Errorf("KV purge failed for key %q: %w", key, err)
   }
   return nil
 }

@@ -278,7 +278,17 @@ type KVStoreOptions struct {
 	// If true, skip server-side auto-persist — only generate client read/write
 	// methods Use this when you want direct client access to KV without RPC
 	// involvement
-	ClientOnly    bool `protobuf:"varint,6,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	ClientOnly bool `protobuf:"varint,6,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	// Bucket-specific metadata (optional).
+	Metadata map[string]string `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// How long to keep delete markers for TTL-based expirations.
+	// Required for per-key TTL support.
+	LimitMarkerTtl *durationpb.Duration `protobuf:"bytes,8,opt,name=limit_marker_ttl,json=limitMarkerTtl,proto3" json:"limit_marker_ttl,omitempty"`
+	// TTL applied when the generator creates a new KV key.
+	// Existing keys retain their current TTL semantics.
+	KeyTtl *durationpb.Duration `protobuf:"bytes,9,opt,name=key_ttl,json=keyTtl,proto3" json:"key_ttl,omitempty"`
+	// TTL applied to generated KV purge helpers so delete markers expire.
+	PurgeTtl      *durationpb.Duration `protobuf:"bytes,10,opt,name=purge_ttl,json=purgeTtl,proto3" json:"purge_ttl,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -353,6 +363,34 @@ func (x *KVStoreOptions) GetClientOnly() bool {
 		return x.ClientOnly
 	}
 	return false
+}
+
+func (x *KVStoreOptions) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *KVStoreOptions) GetLimitMarkerTtl() *durationpb.Duration {
+	if x != nil {
+		return x.LimitMarkerTtl
+	}
+	return nil
+}
+
+func (x *KVStoreOptions) GetKeyTtl() *durationpb.Duration {
+	if x != nil {
+		return x.KeyTtl
+	}
+	return nil
+}
+
+func (x *KVStoreOptions) GetPurgeTtl() *durationpb.Duration {
+	if x != nil {
+		return x.PurgeTtl
+	}
+	return nil
 }
 
 // Object Store options for RPC methods
@@ -654,7 +692,7 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	"\x13pending_bytes_limit\x18\x06 \x01(\x05R\x11pendingBytesLimit\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdc\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8f\x04\n" +
 	"\x0eKVStoreOptions\x12\x16\n" +
 	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12!\n" +
 	"\fkey_template\x18\x02 \x01(\tR\vkeyTemplate\x12+\n" +
@@ -663,7 +701,15 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	"\vmax_history\x18\x05 \x01(\x05R\n" +
 	"maxHistory\x12\x1f\n" +
 	"\vclient_only\x18\x06 \x01(\bR\n" +
-	"clientOnly\"\xbf\x01\n" +
+	"clientOnly\x12C\n" +
+	"\bmetadata\x18\a \x03(\v2'.natsmicro.KVStoreOptions.MetadataEntryR\bmetadata\x12C\n" +
+	"\x10limit_marker_ttl\x18\b \x01(\v2\x19.google.protobuf.DurationR\x0elimitMarkerTtl\x122\n" +
+	"\akey_ttl\x18\t \x01(\v2\x19.google.protobuf.DurationR\x06keyTtl\x126\n" +
+	"\tpurge_ttl\x18\n" +
+	" \x01(\v2\x19.google.protobuf.DurationR\bpurgeTtl\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xbf\x01\n" +
 	"\x12ObjectStoreOptions\x12\x16\n" +
 	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12!\n" +
 	"\fkey_template\x18\x02 \x01(\tR\vkeyTemplate\x12+\n" +
@@ -698,7 +744,7 @@ func file_natsmicro_options_proto_rawDescGZIP() []byte {
 	return file_natsmicro_options_proto_rawDescData
 }
 
-var file_natsmicro_options_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_natsmicro_options_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_natsmicro_options_proto_goTypes = []any{
 	(*ServiceOptions)(nil),              // 0: natsmicro.ServiceOptions
 	(*EndpointOptions)(nil),             // 1: natsmicro.EndpointOptions
@@ -708,34 +754,39 @@ var file_natsmicro_options_proto_goTypes = []any{
 	(*ChunkedIOOptions)(nil),            // 5: natsmicro.ChunkedIOOptions
 	nil,                                 // 6: natsmicro.ServiceOptions.MetadataEntry
 	nil,                                 // 7: natsmicro.EndpointOptions.MetadataEntry
-	(*durationpb.Duration)(nil),         // 8: google.protobuf.Duration
-	(*descriptorpb.ServiceOptions)(nil), // 9: google.protobuf.ServiceOptions
-	(*descriptorpb.MethodOptions)(nil),  // 10: google.protobuf.MethodOptions
+	nil,                                 // 8: natsmicro.KVStoreOptions.MetadataEntry
+	(*durationpb.Duration)(nil),         // 9: google.protobuf.Duration
+	(*descriptorpb.ServiceOptions)(nil), // 10: google.protobuf.ServiceOptions
+	(*descriptorpb.MethodOptions)(nil),  // 11: google.protobuf.MethodOptions
 }
 var file_natsmicro_options_proto_depIdxs = []int32{
 	6,  // 0: natsmicro.ServiceOptions.metadata:type_name -> natsmicro.ServiceOptions.MetadataEntry
-	8,  // 1: natsmicro.ServiceOptions.timeout:type_name -> google.protobuf.Duration
-	8,  // 2: natsmicro.EndpointOptions.timeout:type_name -> google.protobuf.Duration
+	9,  // 1: natsmicro.ServiceOptions.timeout:type_name -> google.protobuf.Duration
+	9,  // 2: natsmicro.EndpointOptions.timeout:type_name -> google.protobuf.Duration
 	7,  // 3: natsmicro.EndpointOptions.metadata:type_name -> natsmicro.EndpointOptions.MetadataEntry
-	8,  // 4: natsmicro.KVStoreOptions.ttl:type_name -> google.protobuf.Duration
-	8,  // 5: natsmicro.ObjectStoreOptions.ttl:type_name -> google.protobuf.Duration
-	9,  // 6: natsmicro.service:extendee -> google.protobuf.ServiceOptions
-	10, // 7: natsmicro.endpoint:extendee -> google.protobuf.MethodOptions
-	10, // 8: natsmicro.kv_store:extendee -> google.protobuf.MethodOptions
-	10, // 9: natsmicro.object_store:extendee -> google.protobuf.MethodOptions
-	10, // 10: natsmicro.stream:extendee -> google.protobuf.MethodOptions
-	10, // 11: natsmicro.chunked_io:extendee -> google.protobuf.MethodOptions
-	0,  // 12: natsmicro.service:type_name -> natsmicro.ServiceOptions
-	1,  // 13: natsmicro.endpoint:type_name -> natsmicro.EndpointOptions
-	2,  // 14: natsmicro.kv_store:type_name -> natsmicro.KVStoreOptions
-	3,  // 15: natsmicro.object_store:type_name -> natsmicro.ObjectStoreOptions
-	4,  // 16: natsmicro.stream:type_name -> natsmicro.StreamOptions
-	5,  // 17: natsmicro.chunked_io:type_name -> natsmicro.ChunkedIOOptions
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	12, // [12:18] is the sub-list for extension type_name
-	6,  // [6:12] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	9,  // 4: natsmicro.KVStoreOptions.ttl:type_name -> google.protobuf.Duration
+	8,  // 5: natsmicro.KVStoreOptions.metadata:type_name -> natsmicro.KVStoreOptions.MetadataEntry
+	9,  // 6: natsmicro.KVStoreOptions.limit_marker_ttl:type_name -> google.protobuf.Duration
+	9,  // 7: natsmicro.KVStoreOptions.key_ttl:type_name -> google.protobuf.Duration
+	9,  // 8: natsmicro.KVStoreOptions.purge_ttl:type_name -> google.protobuf.Duration
+	9,  // 9: natsmicro.ObjectStoreOptions.ttl:type_name -> google.protobuf.Duration
+	10, // 10: natsmicro.service:extendee -> google.protobuf.ServiceOptions
+	11, // 11: natsmicro.endpoint:extendee -> google.protobuf.MethodOptions
+	11, // 12: natsmicro.kv_store:extendee -> google.protobuf.MethodOptions
+	11, // 13: natsmicro.object_store:extendee -> google.protobuf.MethodOptions
+	11, // 14: natsmicro.stream:extendee -> google.protobuf.MethodOptions
+	11, // 15: natsmicro.chunked_io:extendee -> google.protobuf.MethodOptions
+	0,  // 16: natsmicro.service:type_name -> natsmicro.ServiceOptions
+	1,  // 17: natsmicro.endpoint:type_name -> natsmicro.EndpointOptions
+	2,  // 18: natsmicro.kv_store:type_name -> natsmicro.KVStoreOptions
+	3,  // 19: natsmicro.object_store:type_name -> natsmicro.ObjectStoreOptions
+	4,  // 20: natsmicro.stream:type_name -> natsmicro.StreamOptions
+	5,  // 21: natsmicro.chunked_io:type_name -> natsmicro.ChunkedIOOptions
+	22, // [22:22] is the sub-list for method output_type
+	22, // [22:22] is the sub-list for method input_type
+	16, // [16:22] is the sub-list for extension type_name
+	10, // [10:16] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_natsmicro_options_proto_init() }
@@ -749,7 +800,7 @@ func file_natsmicro_options_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_natsmicro_options_proto_rawDesc), len(file_natsmicro_options_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 6,
 			NumServices:   0,
 		},
