@@ -18,7 +18,7 @@ class {{$serviceName}}Handler(Protocol):
         ...
     {{- else if IsServerStreaming .}}
     {{- if not (IsClientStreaming .)}}
-    
+
     async def {{ToSnakeCase .GoName}}(
         self,
         req: pb.{{.Input.GoIdent.GoName}},
@@ -27,7 +27,25 @@ class {{$serviceName}}Handler(Protocol):
     ) -> None:
         """{{.Comments.Leading}} (server-streaming)"""
         ...
+    {{- else}}
+
+    async def {{ToSnakeCase .GoName}}(
+        self,
+        stream: "BidiStream",
+        info: ServerInfo
+    ) -> None:
+        """{{.Comments.Leading}} (bidirectional streaming)"""
+        ...
     {{- end}}
+    {{- else if IsClientStreaming .}}
+
+    async def {{ToSnakeCase .GoName}}(
+        self,
+        stream: "ClientStreamReader",
+        info: ServerInfo
+    ) -> pb.{{.Output.GoIdent.GoName}}:
+        """{{.Comments.Leading}} (client-streaming)"""
+        ...
     {{- end}}
     {{- end}}
     {{- end}}
@@ -111,6 +129,14 @@ async def register_{{ToSnakeCase $serviceName}}(
                 {{- if $eopts.KVStore.TTL.Nanoseconds}}
                 ttl={{$eopts.KVStore.TTL.Seconds}},
                 {{- end}}
+                {{- if $eopts.KVStore.Metadata}}
+                # Requires nats-py >= 2.15 (metadata support)
+                metadata={ {{- range $key, $value := $eopts.KVStore.Metadata}}"{{$key}}": "{{$value}}", {{end}} },
+                {{- end}}
+                {{- if $eopts.KVStore.Compression}}
+                # Requires nats-py >= 2.15 (compression support)
+                compression=True,
+                {{- end}}
             ))
         except Exception as e:
             logging.warning(f"[nats-micro] WARN: failed to create KV bucket '{{$eopts.KVStore.Bucket}}': {e}")
@@ -125,6 +151,10 @@ async def register_{{ToSnakeCase $serviceName}}(
                 {{- end}}
                 {{- if $eopts.ObjectStore.TTL.Nanoseconds}}
                 ttl={{$eopts.ObjectStore.TTL.Seconds}},
+                {{- end}}
+                {{- if $eopts.ObjectStore.Compression}}
+                # Requires nats-py >= 2.15 (compression support)
+                compression=True,
                 {{- end}}
             ))
         except Exception as e:
@@ -195,14 +225,38 @@ async def register_{{ToSnakeCase $serviceName}}(
             {{- if $methodOptions.KVStore}}
             {{- if not $methodOptions.KVStore.ClientOnly}}
             # Auto-persist response to KV Store (bucket: "{{$methodOptions.KVStore.Bucket}}")
+            {{- if IsKVPersistFailureRequired $methodOptions.KVStore}}
+            if js_context is None:
+                error_headers = {"Status": ERROR_CODE_INTERNAL, "Description": "KV persistence requires JetStream"}
+                await req.respond(b'', headers=error_headers)
+                return
+            {{- end}}
             if js_context is not None:
                 try:
                     kv_key = {{ResolveKeyTemplatePy $methodOptions.KVStore.KeyTemplate .}}
                     kv = await js_context.key_value("{{$methodOptions.KVStore.Bucket}}")
+                    {{- if IsKVWriteModeCompareAndSet $methodOptions.KVStore}}
+                    # Compare-and-set: create or update with revision check
+                    try:
+                        await kv.create(kv_key, response_data)
+                    except Exception:
+                        entry = await kv.get(kv_key)
+                        await kv.update(kv_key, response_data, last=entry.revision)
+                    {{- else if IsKVWriteModeCreateOnly $methodOptions.KVStore}}
+                    # Create-only: fail if key already exists
+                    await kv.create(kv_key, response_data)
+                    {{- else}}
+                    # Last-write-wins (default)
                     await kv.put(kv_key, response_data)
+                    {{- end}}
                 except Exception as kv_err:
-                    import logging
+                    {{- if IsKVPersistFailureRequired $methodOptions.KVStore}}
+                    error_headers = {"Status": ERROR_CODE_INTERNAL, "Description": f"failed to persist {{.GoName}} response to KV: {kv_err}"}
+                    await req.respond(b'', headers=error_headers)
+                    return
+                    {{- else}}
                     logging.warning(f"[nats-micro] KV persist failed for {{.GoName}}: {kv_err}")
+                    {{- end}}
             {{- end}}
             {{- end}}
             
@@ -310,6 +364,125 @@ async def register_{{ToSnakeCase $serviceName}}(
         handler=_handle_{{ToSnakeCase .GoName}},
         subject=f"{subject_prefix}.{{ToSnakeCase .GoName}}",
     )
+    {{- else}}{{/* bidi-streaming */}}
+
+    # Register {{.GoName}} endpoint (bidirectional streaming)
+    async def _handle_{{ToSnakeCase .GoName}}(req: micro.Request) -> None:
+        try:
+            headers_dict: Dict[str, str] = {}
+            if req.headers:
+                for key, values in req.headers.items():
+                    if values:
+                        headers_dict[key] = values[0] if isinstance(values, list) else values
+
+            client_inbox = headers_dict.get("Reply-To", "")
+            if not client_inbox:
+                raise ValueError("No Reply-To header for bidi streaming")
+
+            # Create server inbox for receiving client messages
+            server_inbox = nc.new_inbox()
+            recv_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+            sub = await nc.subscribe(server_inbox, cb=lambda msg: recv_queue.put_nowait(msg))
+
+            # Ack with server inbox so client knows where to send
+            await nc.publish(client_inbox, b'', headers={NATS_STREAM_INBOX_HEADER: server_inbox})
+
+            info = ServerInfo(
+                service="{{$serviceName}}",
+                method="{{.GoName}}",
+                subject=f"{subject_prefix}.{{ToSnakeCase .GoName}}",
+                headers=headers_dict
+            )
+
+            sender = ServerStreamSender(nc, client_inbox)
+            {{- if $serviceOptions.UseJSON}}
+            reader = ClientStreamReader(recv_queue, pb.{{.Input.GoIdent.GoName}}, use_json=True)
+            {{- else}}
+            reader = ClientStreamReader(recv_queue, pb.{{.Input.GoIdent.GoName}}, use_json=False)
+            {{- end}}
+            stream = BidiStream(sender, reader)
+
+            try:
+                await handler.{{ToSnakeCase .GoName}}(stream, info)
+            finally:
+                await sender.close()
+                await sub.unsubscribe()
+
+        except Exception as e:
+            logging.error(f"[nats-micro] ERROR: {{.GoName}} bidi stream handler failed: {e}")
+
+    await service.add_endpoint(
+        name="{{.GoName}}",
+        handler=_handle_{{ToSnakeCase .GoName}},
+        subject=f"{subject_prefix}.{{ToSnakeCase .GoName}}",
+    )
+    {{- end}}
+    {{- end}}
+
+    {{- if IsClientStreaming .}}
+    {{- if not (IsServerStreaming .)}}
+
+    # Register {{.GoName}} endpoint (client-streaming)
+    async def _handle_{{ToSnakeCase .GoName}}(req: micro.Request) -> None:
+        try:
+            headers_dict: Dict[str, str] = {}
+            if req.headers:
+                for key, values in req.headers.items():
+                    if values:
+                        headers_dict[key] = values[0] if isinstance(values, list) else values
+
+            client_inbox = headers_dict.get("Reply-To", "")
+            if not client_inbox:
+                raise ValueError("No Reply-To header for client streaming")
+
+            # Create server inbox for receiving client messages
+            server_inbox = nc.new_inbox()
+            recv_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+            sub = await nc.subscribe(server_inbox, cb=lambda msg: recv_queue.put_nowait(msg))
+
+            # Ack with server inbox so client knows where to send
+            await nc.publish(client_inbox, b'', headers={NATS_STREAM_INBOX_HEADER: server_inbox})
+
+            info = ServerInfo(
+                service="{{$serviceName}}",
+                method="{{.GoName}}",
+                subject=f"{subject_prefix}.{{ToSnakeCase .GoName}}",
+                headers=headers_dict
+            )
+
+            {{- if $serviceOptions.UseJSON}}
+            reader = ClientStreamReader(recv_queue, pb.{{.Input.GoIdent.GoName}}, use_json=True)
+            {{- else}}
+            reader = ClientStreamReader(recv_queue, pb.{{.Input.GoIdent.GoName}}, use_json=False)
+            {{- end}}
+
+            try:
+                response_msg = await handler.{{ToSnakeCase .GoName}}(reader, info)
+            finally:
+                await sub.unsubscribe()
+
+            # Send response back to client
+            {{- if $serviceOptions.UseJSON}}
+            response_data = MessageToJson(response_msg).encode()
+            {{- else}}
+            response_data = response_msg.SerializeToString()
+            {{- end}}
+            await nc.publish(client_inbox, response_data, headers={NATS_STREAM_END_HEADER: "true"})
+
+        except Exception as e:
+            logging.error(f"[nats-micro] ERROR: {{.GoName}} client-stream handler failed: {e}")
+            if client_inbox:
+                await nc.publish(client_inbox, b'', headers={
+                    NATS_STREAM_END_HEADER: "true",
+                    "Status": ERROR_CODE_INTERNAL,
+                    "Description": str(e)
+                })
+
+    await service.add_endpoint(
+        name="{{.GoName}}",
+        handler=_handle_{{ToSnakeCase .GoName}},
+        subject=f"{subject_prefix}.{{ToSnakeCase .GoName}}",
+    )
     {{- end}}
     {{- end}}
 
@@ -319,15 +492,21 @@ async def register_{{ToSnakeCase $serviceName}}(
     return {{$serviceName}}Wrapper(service, subject_prefix)
 
 
+# Stream protocol header constants
+NATS_STREAM_SEQ_HEADER = "Nats-Stream-Seq"
+NATS_STREAM_END_HEADER = "Nats-Stream-End"
+NATS_STREAM_INBOX_HEADER = "Nats-Stream-Inbox"
+
+
 class ServerStreamSender:
-    """Server-to-client stream sender for Python"""
-    
+    """Server-to-client stream sender"""
+
     def __init__(self, nc: nats.NATS, reply_subject: str):
         self._nc = nc
         self._reply_subject = reply_subject
         self._seq = 0
         self._closed = False
-    
+
     async def send(self, data: bytes) -> None:
         """Send raw bytes to the client"""
         if self._closed:
@@ -336,9 +515,9 @@ class ServerStreamSender:
         await self._nc.publish(
             self._reply_subject,
             data,
-            headers={"Nats-Stream-Seq": str(self._seq)}
+            headers={NATS_STREAM_SEQ_HEADER: str(self._seq)}
         )
-    
+
     async def send_msg(self, msg: Any, use_json: bool = False) -> None:
         """Serialize and send a protobuf message"""
         if use_json:
@@ -347,7 +526,7 @@ class ServerStreamSender:
         else:
             data = msg.SerializeToString()
         await self.send(data)
-    
+
     async def close(self) -> None:
         """Send end-of-stream marker"""
         if self._closed:
@@ -356,9 +535,9 @@ class ServerStreamSender:
         await self._nc.publish(
             self._reply_subject,
             b'',
-            headers={"Nats-Stream-End": "true"}
+            headers={NATS_STREAM_END_HEADER: "true"}
         )
-    
+
     async def close_with_error(self, code: str, message: str) -> None:
         """Send error and close"""
         if self._closed:
@@ -368,11 +547,80 @@ class ServerStreamSender:
             self._reply_subject,
             b'',
             headers={
-                "Nats-Stream-End": "true",
+                NATS_STREAM_END_HEADER: "true",
                 "Status": code,
                 "Description": message
             }
         )
+
+
+class ClientStreamReader:
+    """Server-side reader for client-streaming messages"""
+
+    def __init__(self, queue: asyncio.Queue, msg_type: Any, use_json: bool = False):
+        self._queue = queue
+        self._msg_type = msg_type
+        self._use_json = use_json
+        self._done = False
+
+    async def recv(self, timeout: float = 30.0) -> Any:
+        """Receive the next message from the client stream.
+        Raises StopAsyncIteration on end-of-stream."""
+        if self._done:
+            raise StopAsyncIteration
+        try:
+            raw_msg = await asyncio.wait_for(self._queue.get(), timeout=timeout)
+        except asyncio.TimeoutError:
+            raise
+
+        # Check for end-of-stream
+        if raw_msg.headers and raw_msg.headers.get(NATS_STREAM_END_HEADER) == "true":
+            self._done = True
+            # Check for error
+            status = raw_msg.headers.get("Status", "") or raw_msg.headers.get("Nats-Service-Error-Code", "")
+            if status:
+                desc = raw_msg.headers.get("Description", "") or raw_msg.headers.get("Nats-Service-Error", "")
+                raise RuntimeError(f"Stream error {status}: {desc}")
+            raise StopAsyncIteration
+
+        # Deserialize
+        if self._use_json:
+            from google.protobuf.json_format import Parse
+            return Parse(raw_msg.data.decode(), self._msg_type())
+        else:
+            return self._msg_type.FromString(raw_msg.data)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            return await self.recv()
+        except StopAsyncIteration:
+            raise
+
+
+class BidiStream:
+    """Bidirectional stream combining sender and reader"""
+
+    def __init__(self, sender: ServerStreamSender, reader: ClientStreamReader):
+        self.sender = sender
+        self.reader = reader
+
+    async def send(self, data: bytes) -> None:
+        await self.sender.send(data)
+
+    async def send_msg(self, msg: Any, use_json: bool = False) -> None:
+        await self.sender.send_msg(msg, use_json)
+
+    async def recv(self, timeout: float = 30.0) -> Any:
+        return await self.reader.recv(timeout)
+
+    async def close_send(self) -> None:
+        await self.sender.close()
+
+    def __aiter__(self):
+        return self.reader.__aiter__()
 
 
 class {{$serviceName}}Wrapper:

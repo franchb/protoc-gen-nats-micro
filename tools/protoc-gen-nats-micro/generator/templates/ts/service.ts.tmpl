@@ -13,18 +13,12 @@ export interface I{{.Service.GoName}}Nats {
 {{- if not $endpointOpts.Skip}}
 {{- if IsUnary .}}
   {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<pb.{{.Output.GoIdent.GoName}}>;
+{{- else if IsBidiStreaming .}}
+  {{ToLowerFirst .GoName}}(stream: BidiStream<pb.{{.Input.GoIdent.GoName}}, pb.{{.Output.GoIdent.GoName}}>): Promise<void>;
 {{- else if IsServerStreaming .}}
-{{- if not (IsClientStreaming .)}}
   {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}, stream: ServerStreamSender<pb.{{.Output.GoIdent.GoName}}>): Promise<void>;
-{{- end}}
-{{- end}}
-{{- if IsClientStreaming .}}
-{{- if not (IsServerStreaming .)}}
-  {{ToLowerFirst .GoName}}(stream: AsyncIterableIterator<pb.{{.Input.GoIdent.GoName}}>): Promise<pb.{{.Output.GoIdent.GoName}}>;
-{{- end}}
-{{- end}}
-{{- if IsBidiStreaming .}}
-  {{ToLowerFirst .GoName}}(recvStream: AsyncIterableIterator<pb.{{.Input.GoIdent.GoName}}>, sendStream: ServerStreamSender<pb.{{.Output.GoIdent.GoName}}>): Promise<void>;
+{{- else if IsClientStreaming .}}
+  {{ToLowerFirst .GoName}}(stream: ClientStreamReader<pb.{{.Input.GoIdent.GoName}}>): Promise<pb.{{.Output.GoIdent.GoName}}>;
 {{- end}}
 {{- end}}
 {{- end}}
@@ -163,6 +157,12 @@ export async function register{{.Service.GoName}}Handlers(
         {{- if $eopts.KVStore.TTL.Nanoseconds}}
         ttl: {{$eopts.KVStore.TTL.Milliseconds}},
         {{- end}}
+        {{- if $eopts.KVStore.Metadata}}
+        metadata: { {{- range $key, $value := $eopts.KVStore.Metadata}}'{{$key}}': '{{$value}}', {{end}} },
+        {{- end}}
+        {{- if $eopts.KVStore.Compression}}
+        compression: true,
+        {{- end}}
       });
     } catch (e) {
       console.warn(`[nats-micro] WARN: failed to create KV bucket "{{$eopts.KVStore.Bucket}}": ${e}`);
@@ -177,6 +177,9 @@ export async function register{{.Service.GoName}}Handlers(
         {{- end}}
         {{- if $eopts.ObjectStore.TTL.Nanoseconds}}
         ttl: {{$eopts.ObjectStore.TTL.Milliseconds}},
+        {{- end}}
+        {{- if $eopts.ObjectStore.Compression}}
+        compression: true,
         {{- end}}
       });
     } catch (e) {
@@ -273,13 +276,47 @@ class {{.Service.GoName}}Handlers {
       {{- if $endpointOpts.KVStore}}
       {{- if not $endpointOpts.KVStore.ClientOnly}}
       // Auto-persist response to KV Store (bucket: "{{$endpointOpts.KVStore.Bucket}}")
+      {{- if IsKVPersistFailureRequired $endpointOpts.KVStore}}
+      if (!this.js) {
+        const eh = headers();
+        eh.set('Status', {{$.Service.GoName}}ErrorCode.INTERNAL);
+        eh.set('Description', 'KV persistence requires JetStream');
+        msg.respond(new Uint8Array(0), { headers: eh });
+        return;
+      }
+      {{- end}}
       if (this.js) {
         try {
           const kvKey = {{ResolveKeyTemplateTS $endpointOpts.KVStore.KeyTemplate .}};
           const kv = await this.js.views.kv('{{$endpointOpts.KVStore.Bucket}}');
+          {{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}
+          // Compare-and-set: create or update with revision check
+          try {
+            await kv.create(kvKey, data);
+          } catch {
+            const entry = await kv.get(kvKey);
+            if (entry) {
+              await kv.update(kvKey, data, entry.revision);
+            } else {
+              await kv.create(kvKey, data);
+            }
+          }
+          {{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}
+          // Create-only: fail if key already exists
+          await kv.create(kvKey, data);
+          {{- else}}
           await kv.put(kvKey, data);
+          {{- end}}
         } catch (kvErr) {
+          {{- if IsKVPersistFailureRequired $endpointOpts.KVStore}}
+          const eh = headers();
+          eh.set('Status', {{$.Service.GoName}}ErrorCode.INTERNAL);
+          eh.set('Description', `failed to persist {{.GoName}} to KV: ${kvErr}`);
+          msg.respond(new Uint8Array(0), { headers: eh });
+          return;
+          {{- else}}
           console.warn(`[nats-micro] WARN: failed to persist {{.GoName}} to KV: ${kvErr}`);
+          {{- end}}
         }
       }
       {{- end}}
@@ -363,11 +400,194 @@ class {{.Service.GoName}}Handlers {
       console.error(`[nats-micro] ERROR: {{.GoName}} stream handler failed:`, error);
     }
   }
+{{- else}}{{/* bidi-streaming */}}
+  async {{ToLowerFirst .GoName}}(err: ServiceError | null, msg: any): Promise<void> {
+    if (err) { throw err; }
+    try {
+      const hdrs = msg.headers;
+      const clientInbox = hdrs?.get('Reply-To') || msg.reply;
+      if (!clientInbox) {
+        throw new Error('No Reply-To header for bidi streaming');
+      }
+
+      const nc = (msg as any)._nc || msg.respondWith?.nc;
+      if (!nc) { throw new Error('Cannot resolve NatsConnection'); }
+
+      // Create server inbox for receiving client messages
+      const serverInbox = nc.options?.inboxPrefix ? `${nc.options.inboxPrefix}.${Date.now()}` : `_INBOX.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+      const recvQueue: any[] = [];
+      let recvResolve: ((value: any) => void) | null = null;
+      const sub = nc.subscribe(serverInbox, {
+        callback: (_err: any, m: any) => {
+          if (recvResolve) {
+            const r = recvResolve;
+            recvResolve = null;
+            r(m);
+          } else {
+            recvQueue.push(m);
+          }
+        },
+      });
+
+      // Ack with server inbox
+      const ackH = headers();
+      ackH.set('Nats-Stream-Inbox', serverInbox);
+      nc.publish(clientInbox, new Uint8Array(0), { headers: ackH });
+
+      const reader: ClientStreamReader<pb.{{.Input.GoIdent.GoName}}> = {
+        async recv(): Promise<pb.{{.Input.GoIdent.GoName}} | null> {
+          const raw = recvQueue.length > 0
+            ? recvQueue.shift()
+            : await new Promise<any>((resolve) => { recvResolve = resolve; });
+          if (raw.headers?.get('Nats-Stream-End') === 'true') {
+            return null;
+          }
+          return pb.{{.Input.GoIdent.GoName}}.fromBinary(raw.data);
+        },
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => {
+              const val = await reader.recv();
+              return val === null ? { done: true, value: undefined } : { done: false, value: val };
+            },
+          };
+        },
+      };
+
+      let senderSeq = 0;
+      const sender: ServerStreamSender<pb.{{.Output.GoIdent.GoName}}> = {
+        async send(val: pb.{{.Output.GoIdent.GoName}}): Promise<void> {
+          senderSeq++;
+          const d = pb.{{.Output.GoIdent.GoName}}.toBinary(val);
+          const h = headers();
+          h.set('Nats-Stream-Seq', String(senderSeq));
+          nc.publish(clientInbox, d, { headers: h });
+        },
+        async close(): Promise<void> {
+          const h = headers();
+          h.set('Nats-Stream-End', 'true');
+          nc.publish(clientInbox, new Uint8Array(0), { headers: h });
+        },
+        async closeWithError(code: string, message: string): Promise<void> {
+          const h = headers();
+          h.set('Nats-Stream-End', 'true');
+          h.set('Status', code);
+          h.set('Description', message);
+          nc.publish(clientInbox, new Uint8Array(0), { headers: h });
+        },
+      };
+
+      const stream: BidiStream<pb.{{.Input.GoIdent.GoName}}, pb.{{.Output.GoIdent.GoName}}> = {
+        sender, reader,
+        send: (val) => sender.send(val),
+        recv: () => reader.recv(),
+        closeSend: () => sender.close(),
+        [Symbol.asyncIterator]: () => reader[Symbol.asyncIterator](),
+      };
+
+      try {
+        await this.impl.{{ToLowerFirst .GoName}}(stream);
+      } finally {
+        await sender.close();
+        sub.unsubscribe();
+      }
+    } catch (error) {
+      console.error(`[nats-micro] ERROR: {{.GoName}} bidi stream handler failed:`, error);
+    }
+  }
+{{- end}}
+{{- end}}
+
+{{- if IsClientStreaming .}}
+{{- if not (IsServerStreaming .)}}
+  async {{ToLowerFirst .GoName}}(err: ServiceError | null, msg: any): Promise<void> {
+    if (err) { throw err; }
+    let clientInbox = '';
+    try {
+      const hdrs = msg.headers;
+      clientInbox = hdrs?.get('Reply-To') || msg.reply;
+      if (!clientInbox) {
+        throw new Error('No Reply-To header for client streaming');
+      }
+
+      const nc = (msg as any)._nc || msg.respondWith?.nc;
+      if (!nc) { throw new Error('Cannot resolve NatsConnection'); }
+
+      // Create server inbox for receiving client messages
+      const serverInbox = nc.options?.inboxPrefix ? `${nc.options.inboxPrefix}.${Date.now()}` : `_INBOX.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+      const recvQueue: any[] = [];
+      let recvResolve: ((value: any) => void) | null = null;
+      const sub = nc.subscribe(serverInbox, {
+        callback: (_err: any, m: any) => {
+          if (recvResolve) {
+            const r = recvResolve;
+            recvResolve = null;
+            r(m);
+          } else {
+            recvQueue.push(m);
+          }
+        },
+      });
+
+      // Ack with server inbox
+      const ackH = headers();
+      ackH.set('Nats-Stream-Inbox', serverInbox);
+      nc.publish(clientInbox, new Uint8Array(0), { headers: ackH });
+
+      const reader: ClientStreamReader<pb.{{.Input.GoIdent.GoName}}> = {
+        async recv(): Promise<pb.{{.Input.GoIdent.GoName}} | null> {
+          const raw = recvQueue.length > 0
+            ? recvQueue.shift()
+            : await new Promise<any>((resolve) => { recvResolve = resolve; });
+          if (raw.headers?.get('Nats-Stream-End') === 'true') {
+            return null;
+          }
+          return pb.{{.Input.GoIdent.GoName}}.fromBinary(raw.data);
+        },
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => {
+              const val = await reader.recv();
+              return val === null ? { done: true, value: undefined } : { done: false, value: val };
+            },
+          };
+        },
+      };
+
+      let response: pb.{{.Output.GoIdent.GoName}};
+      try {
+        response = await this.impl.{{ToLowerFirst .GoName}}(reader);
+      } finally {
+        sub.unsubscribe();
+      }
+
+      // Send response back to client
+      const respData = pb.{{.Output.GoIdent.GoName}}.toBinary(response);
+      const respH = headers();
+      respH.set('Nats-Stream-End', 'true');
+      nc.publish(clientInbox, respData, { headers: respH });
+    } catch (error) {
+      console.error(`[nats-micro] ERROR: {{.GoName}} client-stream handler failed:`, error);
+      if (clientInbox) {
+        const errH = headers();
+        errH.set('Nats-Stream-End', 'true');
+        errH.set('Status', {{$.Service.GoName}}ErrorCode.INTERNAL);
+        errH.set('Description', error instanceof Error ? error.message : 'Unknown error');
+        const nc = (msg as any)._nc || msg.respondWith?.nc;
+        nc?.publish(clientInbox, new Uint8Array(0), { headers: errH });
+      }
+    }
+  }
 {{- end}}
 {{- end}}
 
 {{- end}}
 {{- end}}
+
+// Stream protocol header constants
+const NATS_STREAM_SEQ_HEADER = 'Nats-Stream-Seq';
+const NATS_STREAM_END_HEADER = 'Nats-Stream-End';
+const NATS_STREAM_INBOX_HEADER = 'Nats-Stream-Inbox';
 
 /**
  * ServerStreamSender provides server-to-client streaming capabilities
@@ -377,4 +597,24 @@ export interface ServerStreamSender<T> {
   send(val: T): Promise<void>;
   close(): Promise<void>;
   closeWithError(code: string, message: string): Promise<void>;
+}
+
+/**
+ * ClientStreamReader for server-side reading of client-streaming messages
+ */
+export interface ClientStreamReader<T> {
+  recv(): Promise<T | null>;
+  [Symbol.asyncIterator](): AsyncIterator<T>;
+}
+
+/**
+ * BidiStream combines sending and receiving for bidirectional streaming
+ */
+export interface BidiStream<TIn, TOut> {
+  sender: ServerStreamSender<TOut>;
+  reader: ClientStreamReader<TIn>;
+  send(val: TOut): Promise<void>;
+  recv(): Promise<TIn | null>;
+  closeSend(): Promise<void>;
+  [Symbol.asyncIterator](): AsyncIterator<TIn>;
 }
