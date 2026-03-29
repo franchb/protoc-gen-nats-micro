@@ -472,6 +472,57 @@ func TestGenerateFileEmitsExplicitKVWriteModesAndRequiredPersist(t *testing.T) {
 	}
 }
 
+func TestGenerateFileFailsRequiredKVPersistWhenJetStreamIsMissing(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("CreateBlobRequest", stringField("id", 1)),
+		messageDescriptor("CreateBlobResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("CreateBlobRequired", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+	})
+
+	methodOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(methodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+		Bucket:               "blob_cache",
+		KeyTemplate:          "blob.{id}",
+		PersistFailurePolicy: natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED,
+	})
+	file.Service[0].Method[0].Options = methodOpts
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewGoLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.go", target.GoImportPath)
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	var mainFile string
+	for _, f := range gen.Response().File {
+		if strings.HasSuffix(f.GetName(), "_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "shared_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "_chunked_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "_chunked_protoopaque_nats.pb.go") {
+			mainFile = f.GetContent()
+		}
+	}
+	if mainFile == "" {
+		t.Fatal("failed to find generated Go main file")
+	}
+
+	for _, snippet := range []string{
+		"if h.js == nil {",
+		"req.Error(BlobServiceErrCodeInternal, \"KV persistence requires JetStream\", nil)",
+		"return",
+	} {
+		if !strings.Contains(mainFile, snippet) {
+			t.Fatalf("generated file missing snippet %q", snippet)
+		}
+	}
+}
+
 func TestAPIDocsDescribeExplicitKVSemantics(t *testing.T) {
 	root := repoRootFromTest(t)
 	apiDocPath := filepath.Join(root, "API.md")

@@ -434,39 +434,45 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 		outgoingHeaders = *headersPtr
 	}
 
-	{{- if $endpointOpts.KVStore}}
-	{{- if not $endpointOpts.KVStore.ClientOnly}}
-		// Auto-persist response to KV Store (bucket: "{{$endpointOpts.KVStore.Bucket}}")
-		if h.js != nil {
-			kvKey := {{ResolveKeyTemplateGo $endpointOpts.KVStore.KeyTemplate .}}
-			kv, kvErr := h.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
-			if kvErr != nil {
-				{{- if IsKVPersistFailureRequired $endpointOpts.KVStore}}
-				req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %v", kvErr), nil)
+		{{- if $endpointOpts.KVStore}}
+		{{- if not $endpointOpts.KVStore.ClientOnly}}
+			// Auto-persist response to KV Store (bucket: "{{$endpointOpts.KVStore.Bucket}}")
+			{{- if IsKVPersistFailureRequired $endpointOpts.KVStore}}
+			if h.js == nil {
+				req.Error({{$.Service.GoName}}ErrCodeInternal, "KV persistence requires JetStream", nil)
 				return
-				{{- else}}
-				fmt.Fprintf(os.Stderr, "[nats-micro] WARN: KV bucket \"{{$endpointOpts.KVStore.Bucket}}\" not available for {{.GoName}}: %v\n", kvErr)
-				{{- end}}
-			} else {
-				if kvErr = put{{$.Service.GoName}}KVValue(
-					ctx,
-					kv,
-					kvKey,
-					data,
-					{{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}kvWriteModeCompareAndSet{{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}kvWriteModeCreateOnly{{- else}}kvWriteModeLastWriteWins{{- end}},
-					{{$endpointOpts.KVStore.KeyTTL.Nanoseconds}}*time.Nanosecond,
-				); kvErr != nil {
+			}
+			{{- end}}
+			if h.js != nil {
+				kvKey := {{ResolveKeyTemplateGo $endpointOpts.KVStore.KeyTemplate .}}
+				kv, kvErr := h.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
+				if kvErr != nil {
 					{{- if IsKVPersistFailureRequired $endpointOpts.KVStore}}
-					req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to persist {{.GoName}} response to KV: %v", kvErr), nil)
+					req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %v", kvErr), nil)
 					return
 					{{- else}}
-					fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to persist {{.GoName}} response to KV: %v\n", kvErr)
+					fmt.Fprintf(os.Stderr, "[nats-micro] WARN: KV bucket \"{{$endpointOpts.KVStore.Bucket}}\" not available for {{.GoName}}: %v\n", kvErr)
 					{{- end}}
+				} else {
+					if kvErr = put{{$.Service.GoName}}KVValue(
+						ctx,
+						kv,
+						kvKey,
+						data,
+						{{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}kvWriteModeCompareAndSet{{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}kvWriteModeCreateOnly{{- else}}kvWriteModeLastWriteWins{{- end}},
+						{{$endpointOpts.KVStore.KeyTTL.Nanoseconds}}*time.Nanosecond,
+					); kvErr != nil {
+						{{- if IsKVPersistFailureRequired $endpointOpts.KVStore}}
+						req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to persist {{.GoName}} response to KV: %v", kvErr), nil)
+						return
+						{{- else}}
+						fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to persist {{.GoName}} response to KV: %v\n", kvErr)
+						{{- end}}
+					}
 				}
 			}
-		}
-		{{- end}}
-		{{- end}}
+			{{- end}}
+			{{- end}}
 
 	{{- if $endpointOpts.ObjectStore}}
 	{{- if not $endpointOpts.ObjectStore.ClientOnly}}
