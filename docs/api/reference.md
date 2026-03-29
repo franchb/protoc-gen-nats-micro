@@ -66,6 +66,8 @@ Per-method auto-persistence to NATS KV Store using `option (natsmicro.kv_store)`
 | `description`  | `string`   | —            | Bucket description                       |
 | `max_history`  | `int32`    | —            | Max revisions per key                    |
 | `ttl`          | `Duration` | —            | Time-to-live for entries                 |
+| `write_mode`   | `enum`     | compatibility | Existing-key write behavior              |
+| `persist_failure_policy` | `enum` | best-effort | Server auto-persist failure behavior     |
 
 ```protobuf
 rpc SaveProfile(SaveReq) returns (ProfileResp) {
@@ -74,9 +76,18 @@ rpc SaveProfile(SaveReq) returns (ProfileResp) {
     key_template: "user.{id}"
     max_history: 5
     ttl: {seconds: 3600}
+    write_mode: KV_WRITE_MODE_COMPARE_AND_SET
+    persist_failure_policy: KV_PERSIST_FAILURE_POLICY_REQUIRED
   };
 }
 ```
+
+Notes:
+
+- `KV_WRITE_MODE_LAST_WRITE_WINS` uses `kv.Put(...)` for existing keys
+- `KV_WRITE_MODE_COMPARE_AND_SET` uses revision-matching updates on existing keys
+- `KV_WRITE_MODE_CREATE_ONLY` fails when the key already exists
+- `key_ttl` without `write_mode` uses legacy compatibility behavior
 
 ## Object Store Options
 

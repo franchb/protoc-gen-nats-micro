@@ -20,6 +20,8 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
   option (natsmicro.kv_store) = {
     bucket: "user_profiles"
     key_template: "user.{id}"
+    write_mode: KV_WRITE_MODE_COMPARE_AND_SET
+    persist_failure_policy: KV_PERSIST_FAILURE_POLICY_REQUIRED
   };
 }
 ```
@@ -43,6 +45,14 @@ Key templates extract values from the **request** message to build the storage k
 | `description`  | `string`   | Bucket description                                      |
 | `max_history`  | `int32`    | Max revisions per key                                   |
 | `ttl`          | `Duration` | Time-to-live for entries                                |
+| `write_mode`   | `enum`     | Existing-key write behavior                             |
+| `persist_failure_policy` | `enum` | Whether server auto-persist is required or best-effort |
+
+Preferred fork usage:
+
+- `KV_WRITE_MODE_COMPARE_AND_SET` for explicit strict updates
+- `KV_PERSIST_FAILURE_POLICY_REQUIRED` when KV persistence is part of the RPC contract
+- `key_ttl` without `write_mode` is legacy compatibility behavior
 
 ### Generated Methods
 
@@ -110,7 +120,7 @@ profile, err := client.GetSaveProfileFromKV("user.abc")
 ```
 
 ::: warning
-Without JetStream, KV/Object Store methods will return a runtime error. The RPC methods themselves still work fine — only the auto-persistence and direct store reads require JetStream.
+Without JetStream, KV/Object Store methods will return a runtime error. In KV required-persist mode, the RPC fails instead of silently logging and succeeding.
 :::
 
 ::: tip

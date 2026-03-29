@@ -122,9 +122,13 @@ func FuncMap() template.FuncMap {
 		"IsBidiStreaming":   IsBidiStreaming,
 		"IsUnary":           IsUnary,
 		// KV/ObjectStore key template resolution
-		"ResolveKeyTemplateGo": ResolveKeyTemplateGo,
-		"ResolveKeyTemplateTS": ResolveKeyTemplateTS,
-		"ResolveKeyTemplatePy": ResolveKeyTemplatePy,
+		"ResolveKeyTemplateGo":       ResolveKeyTemplateGo,
+		"ResolveKeyTemplateTS":       ResolveKeyTemplateTS,
+		"ResolveKeyTemplatePy":       ResolveKeyTemplatePy,
+		"IsKVWriteModeLastWriteWins": IsKVWriteModeLastWriteWins,
+		"IsKVWriteModeCompareAndSet": IsKVWriteModeCompareAndSet,
+		"IsKVWriteModeCreateOnly":    IsKVWriteModeCreateOnly,
+		"IsKVPersistFailureRequired": IsKVPersistFailureRequired,
 		// Method field accessors
 		"GetInputFields": GetInputFields,
 	}

@@ -81,6 +81,19 @@ message EndpointOptions {
 // When set, the server handler automatically persists the response
 // into a NATS JetStream KV bucket after processing.
 // The bucket is auto-created during service registration if it doesn't exist.
+enum KVWriteMode {
+  KV_WRITE_MODE_UNSPECIFIED = 0;
+  KV_WRITE_MODE_LAST_WRITE_WINS = 1;
+  KV_WRITE_MODE_COMPARE_AND_SET = 2;
+  KV_WRITE_MODE_CREATE_ONLY = 3;
+}
+
+enum KVPersistFailurePolicy {
+  KV_PERSIST_FAILURE_POLICY_UNSPECIFIED = 0;
+  KV_PERSIST_FAILURE_POLICY_BEST_EFFORT = 1;
+  KV_PERSIST_FAILURE_POLICY_REQUIRED = 2;
+}
+
 message KVStoreOptions {
   // KV bucket name (e.g., "user_profiles")
   string bucket = 1;
@@ -117,6 +130,12 @@ message KVStoreOptions {
 
   // TTL applied to generated KV purge helpers so delete markers expire.
   google.protobuf.Duration purge_ttl = 10;
+
+  // How generated writes behave when the key already exists.
+  KVWriteMode write_mode = 11;
+
+  // Whether generated server auto-persist failures fail the RPC or are logged.
+  KVPersistFailurePolicy persist_failure_policy = 12;
 }
 
 // Object Store options for RPC methods

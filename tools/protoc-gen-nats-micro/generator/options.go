@@ -102,18 +102,35 @@ type EndpointOptions struct {
 	ChunkedIO          *ChunkedIOOpts    // Chunked I/O helper options (nil if not set)
 }
 
+type KVWriteMode int
+
+const (
+	KVWriteModeLastWriteWins KVWriteMode = iota + 1
+	KVWriteModeCompareAndSet
+	KVWriteModeCreateOnly
+)
+
+type KVPersistFailurePolicy int
+
+const (
+	KVPersistFailurePolicyBestEffort KVPersistFailurePolicy = iota + 1
+	KVPersistFailurePolicyRequired
+)
+
 // KVStoreOpts contains KV store persistence options for a method
 type KVStoreOpts struct {
-	Bucket         string            // KV bucket name
-	KeyTemplate    string            // Key template with {field} placeholders
-	TTL            time.Duration     // TTL for entries (0 = no expiry)
-	Description    string            // Human-readable bucket description
-	MaxHistory     int32             // Revisions per key (0 = default 1, max 64)
-	ClientOnly     bool              // Skip server auto-persist; only generate client read/write
-	Metadata       map[string]string // Bucket metadata
-	LimitMarkerTTL time.Duration     // TTL for delete markers used by TTL expiration
-	KeyTTL         time.Duration     // TTL for newly created keys
-	PurgeTTL       time.Duration     // TTL for purge markers
+	Bucket               string                 // KV bucket name
+	KeyTemplate          string                 // Key template with {field} placeholders
+	TTL                  time.Duration          // TTL for entries (0 = no expiry)
+	Description          string                 // Human-readable bucket description
+	MaxHistory           int32                  // Revisions per key (0 = default 1, max 64)
+	ClientOnly           bool                   // Skip server auto-persist; only generate client read/write
+	Metadata             map[string]string      // Bucket metadata
+	LimitMarkerTTL       time.Duration          // TTL for delete markers used by TTL expiration
+	KeyTTL               time.Duration          // TTL for newly created keys
+	PurgeTTL             time.Duration          // TTL for purge markers
+	WriteMode            KVWriteMode            // Resolved write behavior
+	PersistFailurePolicy KVPersistFailurePolicy // Resolved server auto-persist failure behavior
 }
 
 // ObjectStoreOpts contains object store options for a method
@@ -165,12 +182,14 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 	// KV Store options
 	if kvOpts, ok := getExtension[*natspb.KVStoreOptions](methodOpts, natspb.E_KvStore); ok && kvOpts.Bucket != "" {
 		kv := &KVStoreOpts{
-			Bucket:      kvOpts.Bucket,
-			KeyTemplate: kvOpts.KeyTemplate,
-			Description: kvOpts.Description,
-			MaxHistory:  kvOpts.MaxHistory,
-			ClientOnly:  kvOpts.ClientOnly,
-			Metadata:    kvOpts.Metadata,
+			Bucket:               kvOpts.Bucket,
+			KeyTemplate:          kvOpts.KeyTemplate,
+			Description:          kvOpts.Description,
+			MaxHistory:           kvOpts.MaxHistory,
+			ClientOnly:           kvOpts.ClientOnly,
+			Metadata:             kvOpts.Metadata,
+			WriteMode:            resolveKVWriteMode(kvOpts),
+			PersistFailurePolicy: resolveKVPersistFailurePolicy(kvOpts),
 		}
 		if kvOpts.Ttl != nil {
 			kv.TTL = kvOpts.Ttl.AsDuration()
@@ -244,6 +263,47 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 	}
 
 	return opts
+}
+
+func resolveKVWriteMode(kvOpts *natspb.KVStoreOptions) KVWriteMode {
+	switch kvOpts.WriteMode {
+	case natspb.KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS:
+		return KVWriteModeLastWriteWins
+	case natspb.KVWriteMode_KV_WRITE_MODE_COMPARE_AND_SET:
+		return KVWriteModeCompareAndSet
+	case natspb.KVWriteMode_KV_WRITE_MODE_CREATE_ONLY:
+		return KVWriteModeCreateOnly
+	default:
+		if kvOpts.KeyTtl != nil {
+			return KVWriteModeCompareAndSet
+		}
+		return KVWriteModeLastWriteWins
+	}
+}
+
+func resolveKVPersistFailurePolicy(kvOpts *natspb.KVStoreOptions) KVPersistFailurePolicy {
+	switch kvOpts.PersistFailurePolicy {
+	case natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED:
+		return KVPersistFailurePolicyRequired
+	default:
+		return KVPersistFailurePolicyBestEffort
+	}
+}
+
+func IsKVWriteModeLastWriteWins(opts *KVStoreOpts) bool {
+	return opts != nil && opts.WriteMode == KVWriteModeLastWriteWins
+}
+
+func IsKVWriteModeCompareAndSet(opts *KVStoreOpts) bool {
+	return opts != nil && opts.WriteMode == KVWriteModeCompareAndSet
+}
+
+func IsKVWriteModeCreateOnly(opts *KVStoreOpts) bool {
+	return opts != nil && opts.WriteMode == KVWriteModeCreateOnly
+}
+
+func IsKVPersistFailureRequired(opts *KVStoreOpts) bool {
+	return opts != nil && opts.PersistFailurePolicy == KVPersistFailurePolicyRequired
 }
 
 // IsServerStreaming returns true if the method has server-side streaming

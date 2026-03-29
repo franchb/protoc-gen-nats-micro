@@ -27,6 +27,8 @@ service KVStoreDemoService {
     option (natsmicro.kv_store) = {
       bucket : "user_profiles"
       key_template : "user.{id}"
+      write_mode : KV_WRITE_MODE_COMPARE_AND_SET
+      persist_failure_policy : KV_PERSIST_FAILURE_POLICY_REQUIRED
     };
   }
 

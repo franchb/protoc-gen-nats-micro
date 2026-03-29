@@ -43,28 +43,48 @@ type {{.Service.GoName}}NatsClient struct {
   js            jetstream.JetStream        // Optional JetStream for KV/ObjectStore reads
 }
 
-func put{{.Service.GoName}}ClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, keyTTL time.Duration) error {
-  if keyTTL <= 0 {
+func put{{.Service.GoName}}ClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode kvWriteMode, keyTTL time.Duration) error {
+  create := func() error {
+    if keyTTL > 0 {
+      _, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
+      return err
+    }
+    _, err := kv.Create(ctx, key, data)
+    return err
+  }
+
+  switch mode {
+  case kvWriteModeCreateOnly:
+    return create()
+  case kvWriteModeCompareAndSet:
+    if err := create(); err == nil {
+      return nil
+    } else if !errors.Is(err, jetstream.ErrKeyExists) {
+      return err
+    }
+
+    entry, err := kv.Get(ctx, key)
+    if err != nil {
+      if errors.Is(err, jetstream.ErrKeyNotFound) {
+        return create()
+      }
+      return err
+    }
+
+    _, err = kv.Update(ctx, key, data, entry.Revision())
+    return err
+  case kvWriteModeLastWriteWins:
+    if err := create(); err == nil {
+      return nil
+    } else if !errors.Is(err, jetstream.ErrKeyExists) {
+      return err
+    }
+    _, err := kv.Put(ctx, key, data)
+    return err
+  default:
     _, err := kv.Put(ctx, key, data)
     return err
   }
-
-  if _, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL)); err == nil {
-    return nil
-  } else if !errors.Is(err, jetstream.ErrKeyExists) {
-    return err
-  }
-
-  entry, err := kv.Get(ctx, key)
-  if err != nil {
-    if errors.Is(err, jetstream.ErrKeyNotFound) {
-      _, err = kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
-    }
-    return err
-  }
-
-  _, err = kv.Update(ctx, key, data, entry.Revision())
-  return err
 }
 
 // New{{.Service.GoName}}NatsClient creates a new NATS client for {{.Service.GoName}}.
@@ -242,7 +262,14 @@ func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToKV(ctx context.Context,
   if err != nil {
     return fmt.Errorf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %w", err)
   }
-  if err := put{{$.Service.GoName}}ClientKVValue(ctx, kv, key, data, {{$endpointOpts.KVStore.KeyTTL.Nanoseconds}} * time.Nanosecond); err != nil {
+  if err := put{{$.Service.GoName}}ClientKVValue(
+    ctx,
+    kv,
+    key,
+    data,
+    {{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}kvWriteModeCompareAndSet{{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}kvWriteModeCreateOnly{{- else}}kvWriteModeLastWriteWins{{- end}},
+    {{$endpointOpts.KVStore.KeyTTL.Nanoseconds}}*time.Nanosecond,
+  ); err != nil {
     return fmt.Errorf("KV put failed for key %q: %w", key, err)
   }
   return nil

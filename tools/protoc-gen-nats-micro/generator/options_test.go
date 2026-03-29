@@ -263,9 +263,9 @@ func TestGenerateFileEmitsNewKVFeatureWiring(t *testing.T) {
 		"LimitMarkerTTL: 900000000000 * time.Nanosecond",
 		"Metadata: map[string]string{",
 		"\"tier\": \"gold\",",
-		"func putBlobServiceKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, keyTTL time.Duration) error",
+		"func putBlobServiceKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode kvWriteMode, keyTTL time.Duration) error",
+		"kvWriteModeCompareAndSet",
 		"jetstream.KeyTTL(keyTTL)",
-		"putBlobServiceKVValue(ctx, kv, kvKey, data,",
 		"300000000000*time.Nanosecond",
 	} {
 		if !strings.Contains(mainFile, snippet) {
@@ -276,13 +276,221 @@ func TestGenerateFileEmitsNewKVFeatureWiring(t *testing.T) {
 	for _, snippet := range []string{
 		"func (c *BlobServiceNatsClient) PurgeCreateBlobFromKV(ctx context.Context, key string) error",
 		"jetstream.PurgeTTL(1800000000000*time.Nanosecond)",
-		"func putBlobServiceClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, keyTTL time.Duration) error",
+		"func putBlobServiceClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode kvWriteMode, keyTTL time.Duration) error",
 		"jetstream.KeyTTL(keyTTL)",
-		"putBlobServiceClientKVValue(ctx, kv, key, data,",
 		"300000000000*time.Nanosecond",
 	} {
 		if !strings.Contains(mainFile, snippet) {
 			t.Fatalf("generated file missing snippet %q", snippet)
+		}
+	}
+}
+
+func TestOptionsProtoExposesExplicitKVSemantics(t *testing.T) {
+	root := repoRootFromTest(t)
+	optionsProtoPath := filepath.Join(root, "extensions", "proto", "natsmicro", "options.proto")
+
+	data, err := os.ReadFile(optionsProtoPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", optionsProtoPath, err)
+	}
+
+	text := string(data)
+	for _, required := range []string{
+		"enum KVWriteMode",
+		"KV_WRITE_MODE_LAST_WRITE_WINS = 1;",
+		"KV_WRITE_MODE_COMPARE_AND_SET = 2;",
+		"KV_WRITE_MODE_CREATE_ONLY = 3;",
+		"enum KVPersistFailurePolicy",
+		"KV_PERSIST_FAILURE_POLICY_BEST_EFFORT = 1;",
+		"KV_PERSIST_FAILURE_POLICY_REQUIRED = 2;",
+		"KVWriteMode write_mode = 11;",
+		"KVPersistFailurePolicy persist_failure_policy = 12;",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("options.proto is missing explicit KV semantics %q", required)
+		}
+	}
+}
+
+func TestGetEndpointOptionsResolvesExplicitKVSemantics(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("CreateBlobRequest", stringField("id", 1)),
+		messageDescriptor("CreateBlobResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("CreateBlob", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+		methodDescriptor("CreateBlobCompat", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+		methodDescriptor("CreateBlobLegacy", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+	})
+
+	explicitOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(explicitOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+		Bucket:               "blob_cache",
+		KeyTemplate:          "blob.{id}",
+		KeyTtl:               durationpb.New(5 * time.Minute),
+		WriteMode:            natspb.KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS,
+		PersistFailurePolicy: natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED,
+	})
+	file.Service[0].Method[0].Options = explicitOpts
+
+	compatOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(compatOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+		Bucket:      "blob_cache",
+		KeyTemplate: "blob.{id}",
+		KeyTtl:      durationpb.New(5 * time.Minute),
+	})
+	file.Service[0].Method[1].Options = compatOpts
+
+	legacyOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(legacyOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+		Bucket:      "blob_cache",
+		KeyTemplate: "blob.{id}",
+	})
+	file.Service[0].Method[2].Options = legacyOpts
+
+	_, target := newTestPlugin(t, file)
+	methods := target.Services[0].Methods
+
+	explicitKV := GetEndpointOptions(methods[0]).KVStore
+	if explicitKV == nil {
+		t.Fatal("explicit kv_store was not extracted")
+	}
+	if explicitKV.WriteMode != KVWriteModeLastWriteWins {
+		t.Fatalf("explicit WriteMode = %v, want %v", explicitKV.WriteMode, KVWriteModeLastWriteWins)
+	}
+	if explicitKV.PersistFailurePolicy != KVPersistFailurePolicyRequired {
+		t.Fatalf("explicit PersistFailurePolicy = %v, want %v", explicitKV.PersistFailurePolicy, KVPersistFailurePolicyRequired)
+	}
+
+	compatKV := GetEndpointOptions(methods[1]).KVStore
+	if compatKV == nil {
+		t.Fatal("compat kv_store was not extracted")
+	}
+	if compatKV.WriteMode != KVWriteModeCompareAndSet {
+		t.Fatalf("compat WriteMode = %v, want %v", compatKV.WriteMode, KVWriteModeCompareAndSet)
+	}
+	if compatKV.PersistFailurePolicy != KVPersistFailurePolicyBestEffort {
+		t.Fatalf("compat PersistFailurePolicy = %v, want %v", compatKV.PersistFailurePolicy, KVPersistFailurePolicyBestEffort)
+	}
+
+	legacyKV := GetEndpointOptions(methods[2]).KVStore
+	if legacyKV == nil {
+		t.Fatal("legacy kv_store was not extracted")
+	}
+	if legacyKV.WriteMode != KVWriteModeLastWriteWins {
+		t.Fatalf("legacy WriteMode = %v, want %v", legacyKV.WriteMode, KVWriteModeLastWriteWins)
+	}
+	if legacyKV.PersistFailurePolicy != KVPersistFailurePolicyBestEffort {
+		t.Fatalf("legacy PersistFailurePolicy = %v, want %v", legacyKV.PersistFailurePolicy, KVPersistFailurePolicyBestEffort)
+	}
+}
+
+func TestGenerateFileEmitsExplicitKVWriteModesAndRequiredPersist(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("CreateBlobRequest", stringField("id", 1)),
+		messageDescriptor("CreateBlobResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("CreateBlobLWW", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+		methodDescriptor("CreateBlobCAS", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+		methodDescriptor("CreateBlobCreateOnly", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+	})
+
+	lwwOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(lwwOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+		Bucket:               "blob_cache",
+		KeyTemplate:          "blob.{id}",
+		KeyTtl:               durationpb.New(5 * time.Minute),
+		WriteMode:            natspb.KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS,
+		PersistFailurePolicy: natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED,
+	})
+	file.Service[0].Method[0].Options = lwwOpts
+
+	casOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(casOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+		Bucket:      "blob_cache",
+		KeyTemplate: "blob.{id}",
+		KeyTtl:      durationpb.New(5 * time.Minute),
+		WriteMode:   natspb.KVWriteMode_KV_WRITE_MODE_COMPARE_AND_SET,
+	})
+	file.Service[0].Method[1].Options = casOpts
+
+	createOnlyOpts := &descriptorpb.MethodOptions{}
+	proto.SetExtension(createOnlyOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
+		Bucket:      "blob_cache",
+		KeyTemplate: "blob.{id}",
+		KeyTtl:      durationpb.New(5 * time.Minute),
+		WriteMode:   natspb.KVWriteMode_KV_WRITE_MODE_CREATE_ONLY,
+	})
+	file.Service[0].Method[2].Options = createOnlyOpts
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewGoLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.go", target.GoImportPath)
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	var mainFile string
+	for _, f := range gen.Response().File {
+		if strings.HasSuffix(f.GetName(), "_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "shared_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "_chunked_nats.pb.go") &&
+			!strings.HasSuffix(f.GetName(), "_chunked_protoopaque_nats.pb.go") {
+			mainFile = f.GetContent()
+		}
+	}
+	if mainFile == "" {
+		t.Fatal("failed to find generated Go main file")
+	}
+
+	for _, snippet := range []string{
+		"type kvWriteMode int",
+		"kvWriteModeLastWriteWins",
+		"kvWriteModeCompareAndSet",
+		"kvWriteModeCreateOnly",
+		"type kvPersistFailurePolicy int",
+		"kvPersistFailurePolicyBestEffort",
+		"kvPersistFailurePolicyRequired",
+		"case kvWriteModeLastWriteWins:",
+		"case kvWriteModeCompareAndSet:",
+		"case kvWriteModeCreateOnly:",
+		"putBlobServiceKVValue(",
+		"kvWriteModeLastWriteWins",
+		"kvWriteModeCompareAndSet",
+		"kvWriteModeCreateOnly",
+		"300000000000*time.Nanosecond",
+		"req.Error(BlobServiceErrCodeInternal, fmt.Sprintf(\"failed to persist CreateBlobLWW response to KV: %v\", kvErr), nil)",
+		"putBlobServiceClientKVValue(",
+	} {
+		if !strings.Contains(mainFile, snippet) {
+			t.Fatalf("generated file missing snippet %q", snippet)
+		}
+	}
+}
+
+func TestAPIDocsDescribeExplicitKVSemantics(t *testing.T) {
+	root := repoRootFromTest(t)
+	apiDocPath := filepath.Join(root, "API.md")
+
+	data, err := os.ReadFile(apiDocPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", apiDocPath, err)
+	}
+
+	text := string(data)
+	for _, required := range []string{
+		"`write_mode`",
+		"`persist_failure_policy`",
+		"`KV_WRITE_MODE_COMPARE_AND_SET`",
+		"`KV_PERSIST_FAILURE_POLICY_REQUIRED`",
+		"`key_ttl` without `write_mode` uses legacy compatibility behavior",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("API.md is missing explicit KV semantics guidance %q", required)
 		}
 	}
 }
