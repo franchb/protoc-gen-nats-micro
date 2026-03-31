@@ -534,6 +534,125 @@ func TestValidateChunkedIOWorksForAllLanguages(t *testing.T) {
 	}
 }
 
+func TestGenerateFileEmitsClientStreamingForPython(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("SumRequest", stringField("value", 1)),
+		messageDescriptor("SumResponse", stringField("total", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Sum", "SumRequest", "SumResponse", true, false, nil),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewPythonLanguage()
+
+	// Generate shared file first (required by Python)
+	shared := gen.NewGeneratedFile("test/shared_nats_pb2.py", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	if len(responseFiles) == 0 {
+		t.Fatal("GenerateFile() produced no files")
+	}
+
+	// Find the Python service file
+	var pyFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats_pb2.py") &&
+			!strings.HasSuffix(f.GetName(), "shared_nats_pb2.py") {
+			pyFile = f.GetContent()
+			break
+		}
+	}
+	if pyFile == "" {
+		t.Fatal("failed to find generated Python service file")
+	}
+
+	// Verify client-streaming code was generated
+	expectedSnippets := []string{
+		"ClientStreamSender",
+		"close_and_recv",
+		"async def send(",
+		"Nats-Stream-Inbox",
+		"Nats-Stream-Seq",
+		"Nats-Stream-End",
+		"async def sum(",      // client method
+		"stream_iter",         // server handler async generator
+		"client-streaming",    // docstring
+	}
+	for _, snippet := range expectedSnippets {
+		if !strings.Contains(pyFile, snippet) {
+			t.Errorf("generated Python file missing snippet %q", snippet)
+		}
+	}
+}
+
+func TestGenerateFileEmitsChunkedUploadForPython(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
+		messageDescriptor("UploadResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewPythonLanguage()
+
+	// Generate shared file first
+	shared := gen.NewGeneratedFile("test/shared_nats_pb2.py", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	if len(responseFiles) == 0 {
+		t.Fatal("GenerateFile() produced no files")
+	}
+
+	// Find the Python service file
+	var pyFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats_pb2.py") &&
+			!strings.HasSuffix(f.GetName(), "shared_nats_pb2.py") {
+			pyFile = f.GetContent()
+			break
+		}
+	}
+	if pyFile == "" {
+		t.Fatal("failed to find generated Python service file")
+	}
+
+	// Verify chunked upload helpers were generated
+	expectedSnippets := []string{
+		"ChunkedClientStreamSender",
+		"send_bytes",
+		"ClientStreamSender",
+		"close_and_recv",
+	}
+	for _, snippet := range expectedSnippets {
+		if !strings.Contains(pyFile, snippet) {
+			t.Errorf("generated Python file missing chunked upload snippet %q", snippet)
+		}
+	}
+
+	// Verify the send_bytes sets the chunk field
+	if !strings.Contains(pyFile, "msg.data = data") {
+		t.Error("ChunkedClientStreamSender.send_bytes should set the chunk field 'data'")
+	}
+}
+
 func newTestPlugin(t *testing.T, file *descriptorpb.FileDescriptorProto) (*protogen.Plugin, *protogen.File) {
 	t.Helper()
 

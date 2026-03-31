@@ -294,9 +294,78 @@ class {{$serviceName}}Client:
     {{- end}}
     {{- end}}
 
+    {{- if IsClientStreaming .}}
+    {{- if not (IsServerStreaming .)}}
+
+    async def {{ToSnakeCase .GoName}}(
+        self,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Optional[float] = None
+    ) -> "ClientStreamSender":
+        """{{.Comments.Leading}} (client-streaming)
+
+        Returns a ClientStreamSender to send streamed messages and receive the final response.
+        """
+        subject = f"{self._subject_prefix}.{{ToSnakeCase .GoName}}"
+
+        # Determine timeout
+        {{- if $methodOptions.Timeout}}
+        request_timeout = timeout or {{$methodOptions.Timeout.Seconds}}.0
+        {{- else}}
+        request_timeout = timeout or self._default_timeout
+        {{- end}}
+
+        # Create inbox for receiving the final response
+        reply_inbox = self._nc.new_inbox()
+
+        # Send initial handshake to get server's inbox
+        send_headers = headers.copy() if headers else {}
+        send_headers["Reply-To"] = reply_inbox
+
+        try:
+            ack = await self._nc.request(
+                subject,
+                b'',
+                headers=send_headers,
+                timeout=request_timeout
+            )
+        except asyncio.TimeoutError:
+            raise {{$serviceName}}Error(
+                ERROR_CODE_UNAVAILABLE,
+                "{{.GoName}}",
+                f"request timeout after {request_timeout}s"
+            )
+        except Exception as e:
+            raise {{$serviceName}}Error(
+                ERROR_CODE_UNAVAILABLE,
+                "{{.GoName}}",
+                f"failed to initiate client stream: {str(e)}"
+            )
+
+        # Extract server inbox from ack
+        server_inbox = ""
+        if ack.headers:
+            val = ack.headers.get("Nats-Stream-Inbox")
+            if val:
+                server_inbox = val[0] if isinstance(val, list) else val
+        if not server_inbox:
+            raise {{$serviceName}}Error(
+                ERROR_CODE_INTERNAL,
+                "{{.GoName}}",
+                "server did not provide stream inbox"
+            )
+
+        {{- if $methodOptions.ChunkedIO}}
+        return ChunkedClientStreamSender(self._nc, server_inbox, reply_inbox, pb.{{.Input.GoIdent.GoName}}, pb.{{.Output.GoIdent.GoName}}, {{$serviceOptions.UseJSON}})
+        {{- else}}
+        return ClientStreamSender(self._nc, server_inbox, reply_inbox, pb.{{.Input.GoIdent.GoName}}, pb.{{.Output.GoIdent.GoName}}, {{$serviceOptions.UseJSON}})
+        {{- end}}
     {{- end}}
     {{- end}}
-    
+
+    {{- end}}
+    {{- end}}
+
     def endpoints(self) -> List[EndpointInfo]:
         """Get list of endpoint info"""
         return [
@@ -372,4 +441,89 @@ class {{$serviceName}}_{{.GoName}}_ChunkedReceiver(ClientStreamReceiver):
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- end}}
+
+
+class ClientStreamSender:
+    """Sends streamed messages for a client-streaming RPC and receives the final response"""
+
+    def __init__(self, nc: Any, send_to: str, reply_to: str, msg_class: Any, resp_class: Any, use_json: bool = False):
+        self._nc = nc
+        self._send_to = send_to
+        self._reply_to = reply_to
+        self._msg_class = msg_class
+        self._resp_class = resp_class
+        self._use_json = use_json
+        self._seq = 0
+
+    async def send(self, msg) -> None:
+        """Send a message to the server stream"""
+        self._seq += 1
+        if self._use_json:
+            data = MessageToJson(msg).encode()
+        else:
+            data = msg.SerializeToString()
+        await self._nc.publish(
+            self._send_to,
+            data,
+            headers={"Nats-Stream-Seq": str(self._seq)}
+        )
+
+    async def close_and_recv(self):
+        """Send end-of-stream marker and wait for the final response"""
+        # Subscribe for the final response BEFORE sending end marker
+        sub = await self._nc.subscribe(self._reply_to, max_msgs=1)
+
+        # Send end-of-stream marker
+        await self._nc.publish(
+            self._send_to,
+            b'',
+            headers={"Nats-Stream-End": "true"}
+        )
+
+        # Wait for server response
+        try:
+            msg = await sub.next_msg(timeout=30.0)
+        except Exception as e:
+            raise RuntimeError(f"failed to receive response: {str(e)}")
+        finally:
+            await sub.unsubscribe()
+
+        # Check for error headers
+        if msg.headers:
+            error_code = msg.headers.get("Nats-Service-Error-Code")
+            if error_code:
+                error_code = error_code[0] if isinstance(error_code, list) else error_code
+                error_message = "unknown error"
+                error_val = msg.headers.get("Nats-Service-Error")
+                if error_val:
+                    error_message = error_val[0] if isinstance(error_val, list) else error_val
+                raise RuntimeError(f"[{error_code}] {error_message}")
+
+        # Parse response
+        if self._use_json:
+            return Parse(msg.data.decode(), self._resp_class())
+        else:
+            return self._resp_class.FromString(msg.data)
+
+
+{{- range .Service.Methods}}
+{{- $methodOptions := GetEndpointOptions .}}
+{{- if not $methodOptions.Skip}}
+{{- if IsClientStreaming .}}
+{{- if not (IsServerStreaming .)}}
+{{- if $methodOptions.ChunkedIO}}
+
+class ChunkedClientStreamSender(ClientStreamSender):
+    """Client-streaming sender with chunked upload helper for {{.GoName}}"""
+
+    async def send_bytes(self, data: bytes) -> None:
+        """Create a chunk message with the given bytes and send it"""
+        msg = self._msg_class()
+        msg.{{$methodOptions.ChunkedIO.ChunkField}} = data
+        await self.send(msg)
+{{- end}}
+{{- end}}
+{{- end}}
+{{- end}}
 {{- end}}
