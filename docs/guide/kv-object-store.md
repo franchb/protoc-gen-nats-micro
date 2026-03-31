@@ -77,7 +77,6 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
 | `bucket`         | `string` | Object store bucket name (auto-created) |
 | `key_template`   | `string` | Template for building the key           |
 | `description`    | `string` | Bucket description                      |
-| `max_chunk_size` | `int32`  | Max chunk size for large objects        |
 
 ### Generated Methods
 

@@ -15,12 +15,15 @@ tasks:
   # Phase 1: Generate extension types (natsmicro/options.proto)
   generate:extensions:
     desc: Generate protobuf extensions (phase 1)
+    dir: extensions/proto
     cmds:
-      - buf generate --path extensions/proto/natsmicro/options.proto
+      - buf generate --template buf.gen.yaml --path natsmicro/options.proto
       # The plugin imports from tools/.../nats/micro, so sync the generated file there too
-      - cp gen/nats/micro/options.pb.go tools/protoc-gen-nats-micro/nats/micro/options.pb.go
+      - cp ../../gen/nats/micro/options.pb.go ../../tools/protoc-gen-nats-micro/nats/micro/options.pb.go
     sources:
       - extensions/proto/natsmicro/options.proto
+      - extensions/proto/buf.yaml
+      - extensions/proto/buf.gen.yaml
       - buf.gen.yaml
     generates:
       - gen/nats/micro/options.pb.go

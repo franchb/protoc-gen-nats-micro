@@ -105,10 +105,10 @@ type ClientStreamReceiver struct {
   sub       *nats.Subscription
   msgCh     chan *nats.Msg
   done      chan struct{}
-  lastErr   error
   ordered   bool
   lastSeq   int
   mu        sync.Mutex
+  closeOnce sync.Once
 }
 
 func newClientStreamReceiver(nc *nats.Conn, inbox string, ordered bool) (*ClientStreamReceiver, error) {
@@ -116,11 +116,6 @@ func newClientStreamReceiver(nc *nats.Conn, inbox string, ordered bool) (*Client
   done := make(chan struct{})
 
   sub, err := nc.Subscribe(inbox, func(msg *nats.Msg) {
-    // Check for end-of-stream
-    if msg.Header.Get(natsStreamEndHeader) == "true" {
-      close(done)
-      return
-    }
     select {
     case msgCh <- msg:
     case <-done:
@@ -139,18 +134,26 @@ func newClientStreamReceiver(nc *nats.Conn, inbox string, ordered bool) (*Client
 }
 
 // Recv blocks until the next message arrives or the stream ends.
-// Returns nil, io.EOF when the stream is complete.
-// Returns the raw NATS message for caller to decode.
+// Returns (nil, io.EOF) on normal stream completion.
+// Returns the raw NATS message for the caller to decode.
+//
+// NOTE: this method returns io.EOF (not a string-wrapped "EOF") on normal
+// stream termination. Callers that previously matched on err.Error() == "EOF"
+// should switch to errors.Is(err, io.EOF).
 func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
   select {
   case msg, ok := <-r.msgCh:
     if !ok {
-      return nil, fmt.Errorf("stream closed")
+      return nil, errors.New("stream closed")
     }
-    // Check for error in stream
-    if status := msg.Header.Get("Nats-Service-Error-Code"); status != "" {
-      desc := msg.Header.Get("Nats-Service-Error")
-      return nil, fmt.Errorf("stream error [%s]: %s", status, desc)
+    if msg.Header.Get(natsStreamEndHeader) == "true" {
+      if code, desc, ok := checkStreamErrorHeaders(msg.Header); ok {
+        if desc == "" {
+          desc = "stream error"
+        }
+        return nil, fmt.Errorf("stream error [%s]: %s", code, desc)
+      }
+      return nil, io.EOF // Normal end-of-stream
     }
     // Enforce ordering if requested
     if r.ordered {
@@ -168,15 +171,69 @@ func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
     }
     return msg, nil
   case <-r.done:
-    return nil, fmt.Errorf("EOF")
+    return nil, errors.New("stream closed") // Caller-initiated closure via Close()
   case <-ctx.Done():
     return nil, ctx.Err()
   }
 }
 
-// Close unsubscribes from the stream
+// Close unsubscribes from the stream.
+// Returns "stream closed" on subsequent Recv calls (caller-initiated closure).
 func (r *ClientStreamReceiver) Close() error {
-  return r.sub.Unsubscribe()
+  var err error
+  r.closeOnce.Do(func() {
+    close(r.done)
+    err = r.sub.Unsubscribe()
+  })
+  return err
+}
+
+// checkStreamErrorHeaders inspects h for NATS service-error headers.
+// It checks both the standard "Status"/"Description" pair and the
+// NATS micro "Nats-Service-Error-Code"/"Nats-Service-Error" pair.
+// Returns the code, description, and true if an error header is present.
+func checkStreamErrorHeaders(h nats.Header) (code, desc string, ok bool) {
+  if c := h.Get("Status"); c != "" {
+    return c, h.Get("Description"), true
+  }
+  if c := h.Get("Nats-Service-Error-Code"); c != "" {
+    return c, h.Get("Nats-Service-Error"), true
+  }
+  return "", "", false
+}
+
+// writeFileAtomically writes content produced by fn to path atomically.
+// It creates a temp file in the same directory, calls fn, syncs, closes,
+// then renames to the target path. On any error the temp file is removed.
+func writeFileAtomically(path string, fn func(io.Writer) error) error {
+  dir := filepath.Dir(path)
+  tmp, err := os.CreateTemp(dir, ".tmp-*")
+  if err != nil {
+    return fmt.Errorf("failed to create temp file: %w", err)
+  }
+  tmpName := tmp.Name()
+  defer func() {
+    if tmpName != "" {
+      os.Remove(tmpName)
+    }
+  }()
+
+  if err := fn(tmp); err != nil {
+    tmp.Close()
+    return err
+  }
+  if err := tmp.Sync(); err != nil {
+    tmp.Close()
+    return fmt.Errorf("failed to sync temp file: %w", err)
+  }
+  if err := tmp.Close(); err != nil {
+    return fmt.Errorf("failed to close temp file: %w", err)
+  }
+  if err := os.Rename(tmpName, path); err != nil {
+    return fmt.Errorf("failed to rename temp file: %w", err)
+  }
+  tmpName = "" // prevent deferred cleanup
+  return nil
 }
 
 // Suppress unused import warnings

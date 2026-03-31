@@ -148,6 +148,51 @@ reply, _ = stream.Recv(ctx)  // "echo: bye"
 stream.CloseSend()
 ```
 
+## Chunked Blob Helpers
+
+For simple blob transfer over streaming RPC, annotate the method with `chunked_io` and use a single-field bytes chunk message:
+
+```protobuf
+message SnapshotChunk {
+  bytes data = 1;
+}
+
+rpc ExportSnapshot(ExportSnapshotRequest) returns (stream SnapshotChunk) {
+  option (natsmicro.chunked_io) = {};
+}
+
+rpc ImportSnapshot(stream SnapshotChunk) returns (ImportSnapshotResponse) {
+  option (natsmicro.chunked_io) = {
+    default_chunk_size: 131072
+  };
+}
+```
+
+Current scope:
+
+- Go client helpers are generated for server-streaming downloads and client-streaming uploads.
+- Bidirectional methods are intentionally rejected.
+- Chunk messages must stay simple: exactly one `bytes` field, with metadata kept in the request or final response.
+
+Generated Go helpers:
+
+- Download streams: `RecvBytes(ctx)`, `RecvToWriter(ctx, w)`, `RecvToFile(ctx, path)` — `RecvToFile` writes atomically (temp file + rename); no partial file is left on error.
+- Upload streams: `SendBytes(data)`, `SendReader(r, chunkSize)`, `SendFile(path, chunkSize)` — upload helpers are stream-first; on error some chunks may have already been transmitted.
+
+Example:
+
+```go
+download, err := client.ExportSnapshot(ctx, &ExportSnapshotRequest{Id: "snap-1"})
+if err != nil { /* handle */ }
+if err := download.RecvToFile(ctx, "/tmp/snapshot.bin"); err != nil { /* handle */ }
+
+upload, err := client.ImportSnapshot(ctx)
+if err != nil { /* handle */ }
+if err := upload.SendFile("/tmp/snapshot.bin", 0); err != nil { /* handle */ }
+resp, err := upload.CloseAndRecv(ctx)
+_ = resp
+```
+
 ## Stream Types Reference
 
 ### Server-Side Stream (Send-only)

@@ -456,6 +456,61 @@ func (x *StreamOptions) GetOrdered() bool {
 	return false
 }
 
+// Chunked I/O helpers for simple blob transfer over streaming RPCs.
+type ChunkedIOOptions struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Name of the bytes field carrying each payload chunk.
+	ChunkField string `protobuf:"bytes,1,opt,name=chunk_field,json=chunkField,proto3" json:"chunk_field,omitempty"`
+	// Default chunk size for generated helpers when the caller passes 0.
+	DefaultChunkSize int32 `protobuf:"varint,2,opt,name=default_chunk_size,json=defaultChunkSize,proto3" json:"default_chunk_size,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ChunkedIOOptions) Reset() {
+	*x = ChunkedIOOptions{}
+	mi := &file_natsmicro_options_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChunkedIOOptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChunkedIOOptions) ProtoMessage() {}
+
+func (x *ChunkedIOOptions) ProtoReflect() protoreflect.Message {
+	mi := &file_natsmicro_options_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChunkedIOOptions.ProtoReflect.Descriptor instead.
+func (*ChunkedIOOptions) Descriptor() ([]byte, []int) {
+	return file_natsmicro_options_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ChunkedIOOptions) GetChunkField() string {
+	if x != nil {
+		return x.ChunkField
+	}
+	return ""
+}
+
+func (x *ChunkedIOOptions) GetDefaultChunkSize() int32 {
+	if x != nil {
+		return x.DefaultChunkSize
+	}
+	return 0
+}
+
 var file_natsmicro_options_proto_extTypes = []protoimpl.ExtensionInfo{
 	{
 		ExtendedType:  (*descriptorpb.ServiceOptions)(nil),
@@ -497,6 +552,14 @@ var file_natsmicro_options_proto_extTypes = []protoimpl.ExtensionInfo{
 		Tag:           "bytes,50005,opt,name=stream",
 		Filename:      "natsmicro/options.proto",
 	},
+	{
+		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
+		ExtensionType: (*ChunkedIOOptions)(nil),
+		Field:         50006,
+		Name:          "natsmicro.chunked_io",
+		Tag:           "bytes,50006,opt,name=chunked_io",
+		Filename:      "natsmicro/options.proto",
+	},
 }
 
 // Extension fields to descriptorpb.ServiceOptions.
@@ -515,6 +578,8 @@ var (
 	E_ObjectStore = &file_natsmicro_options_proto_extTypes[3]
 	// optional natsmicro.StreamOptions stream = 50005;
 	E_Stream = &file_natsmicro_options_proto_extTypes[4]
+	// optional natsmicro.ChunkedIOOptions chunked_io = 50006;
+	E_ChunkedIo = &file_natsmicro_options_proto_extTypes[5]
 )
 
 var File_natsmicro_options_proto protoreflect.FileDescriptor
@@ -561,12 +626,18 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	"clientOnly\"L\n" +
 	"\rStreamOptions\x12!\n" +
 	"\fmax_inflight\x18\x01 \x01(\x05R\vmaxInflight\x12\x18\n" +
-	"\aordered\x18\x02 \x01(\bR\aordered:V\n" +
+	"\aordered\x18\x02 \x01(\bR\aordered\"a\n" +
+	"\x10ChunkedIOOptions\x12\x1f\n" +
+	"\vchunk_field\x18\x01 \x01(\tR\n" +
+	"chunkField\x12,\n" +
+	"\x12default_chunk_size\x18\x02 \x01(\x05R\x10defaultChunkSize:V\n" +
 	"\aservice\x12\x1f.google.protobuf.ServiceOptions\x18ц\x03 \x01(\v2\x19.natsmicro.ServiceOptionsR\aservice:X\n" +
 	"\bendpoint\x12\x1e.google.protobuf.MethodOptions\x18҆\x03 \x01(\v2\x1a.natsmicro.EndpointOptionsR\bendpoint:V\n" +
 	"\bkv_store\x12\x1e.google.protobuf.MethodOptions\x18ӆ\x03 \x01(\v2\x19.natsmicro.KVStoreOptionsR\akvStore:b\n" +
 	"\fobject_store\x12\x1e.google.protobuf.MethodOptions\x18Ԇ\x03 \x01(\v2\x1d.natsmicro.ObjectStoreOptionsR\vobjectStore:R\n" +
-	"\x06stream\x12\x1e.google.protobuf.MethodOptions\x18Ն\x03 \x01(\v2\x18.natsmicro.StreamOptionsR\x06streamB6Z4github.com/toyz/protoc-gen-nats-micro/gen/nats/microb\x06proto3"
+	"\x06stream\x12\x1e.google.protobuf.MethodOptions\x18Ն\x03 \x01(\v2\x18.natsmicro.StreamOptionsR\x06stream:\\\n" +
+	"\n" +
+	"chunked_io\x12\x1e.google.protobuf.MethodOptions\x18ֆ\x03 \x01(\v2\x1b.natsmicro.ChunkedIOOptionsR\tchunkedIoB6Z4github.com/toyz/protoc-gen-nats-micro/gen/nats/microb\x06proto3"
 
 var (
 	file_natsmicro_options_proto_rawDescOnce sync.Once
@@ -580,40 +651,43 @@ func file_natsmicro_options_proto_rawDescGZIP() []byte {
 	return file_natsmicro_options_proto_rawDescData
 }
 
-var file_natsmicro_options_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_natsmicro_options_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_natsmicro_options_proto_goTypes = []any{
 	(*ServiceOptions)(nil),              // 0: natsmicro.ServiceOptions
 	(*EndpointOptions)(nil),             // 1: natsmicro.EndpointOptions
 	(*KVStoreOptions)(nil),              // 2: natsmicro.KVStoreOptions
 	(*ObjectStoreOptions)(nil),          // 3: natsmicro.ObjectStoreOptions
 	(*StreamOptions)(nil),               // 4: natsmicro.StreamOptions
-	nil,                                 // 5: natsmicro.ServiceOptions.MetadataEntry
-	nil,                                 // 6: natsmicro.EndpointOptions.MetadataEntry
-	(*durationpb.Duration)(nil),         // 7: google.protobuf.Duration
-	(*descriptorpb.ServiceOptions)(nil), // 8: google.protobuf.ServiceOptions
-	(*descriptorpb.MethodOptions)(nil),  // 9: google.protobuf.MethodOptions
+	(*ChunkedIOOptions)(nil),            // 5: natsmicro.ChunkedIOOptions
+	nil,                                 // 6: natsmicro.ServiceOptions.MetadataEntry
+	nil,                                 // 7: natsmicro.EndpointOptions.MetadataEntry
+	(*durationpb.Duration)(nil),         // 8: google.protobuf.Duration
+	(*descriptorpb.ServiceOptions)(nil), // 9: google.protobuf.ServiceOptions
+	(*descriptorpb.MethodOptions)(nil),  // 10: google.protobuf.MethodOptions
 }
 var file_natsmicro_options_proto_depIdxs = []int32{
-	5,  // 0: natsmicro.ServiceOptions.metadata:type_name -> natsmicro.ServiceOptions.MetadataEntry
-	7,  // 1: natsmicro.ServiceOptions.timeout:type_name -> google.protobuf.Duration
-	7,  // 2: natsmicro.EndpointOptions.timeout:type_name -> google.protobuf.Duration
-	6,  // 3: natsmicro.EndpointOptions.metadata:type_name -> natsmicro.EndpointOptions.MetadataEntry
-	7,  // 4: natsmicro.KVStoreOptions.ttl:type_name -> google.protobuf.Duration
-	7,  // 5: natsmicro.ObjectStoreOptions.ttl:type_name -> google.protobuf.Duration
-	8,  // 6: natsmicro.service:extendee -> google.protobuf.ServiceOptions
-	9,  // 7: natsmicro.endpoint:extendee -> google.protobuf.MethodOptions
-	9,  // 8: natsmicro.kv_store:extendee -> google.protobuf.MethodOptions
-	9,  // 9: natsmicro.object_store:extendee -> google.protobuf.MethodOptions
-	9,  // 10: natsmicro.stream:extendee -> google.protobuf.MethodOptions
-	0,  // 11: natsmicro.service:type_name -> natsmicro.ServiceOptions
-	1,  // 12: natsmicro.endpoint:type_name -> natsmicro.EndpointOptions
-	2,  // 13: natsmicro.kv_store:type_name -> natsmicro.KVStoreOptions
-	3,  // 14: natsmicro.object_store:type_name -> natsmicro.ObjectStoreOptions
-	4,  // 15: natsmicro.stream:type_name -> natsmicro.StreamOptions
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	11, // [11:16] is the sub-list for extension type_name
-	6,  // [6:11] is the sub-list for extension extendee
+	6,  // 0: natsmicro.ServiceOptions.metadata:type_name -> natsmicro.ServiceOptions.MetadataEntry
+	8,  // 1: natsmicro.ServiceOptions.timeout:type_name -> google.protobuf.Duration
+	8,  // 2: natsmicro.EndpointOptions.timeout:type_name -> google.protobuf.Duration
+	7,  // 3: natsmicro.EndpointOptions.metadata:type_name -> natsmicro.EndpointOptions.MetadataEntry
+	8,  // 4: natsmicro.KVStoreOptions.ttl:type_name -> google.protobuf.Duration
+	8,  // 5: natsmicro.ObjectStoreOptions.ttl:type_name -> google.protobuf.Duration
+	9,  // 6: natsmicro.service:extendee -> google.protobuf.ServiceOptions
+	10, // 7: natsmicro.endpoint:extendee -> google.protobuf.MethodOptions
+	10, // 8: natsmicro.kv_store:extendee -> google.protobuf.MethodOptions
+	10, // 9: natsmicro.object_store:extendee -> google.protobuf.MethodOptions
+	10, // 10: natsmicro.stream:extendee -> google.protobuf.MethodOptions
+	10, // 11: natsmicro.chunked_io:extendee -> google.protobuf.MethodOptions
+	0,  // 12: natsmicro.service:type_name -> natsmicro.ServiceOptions
+	1,  // 13: natsmicro.endpoint:type_name -> natsmicro.EndpointOptions
+	2,  // 14: natsmicro.kv_store:type_name -> natsmicro.KVStoreOptions
+	3,  // 15: natsmicro.object_store:type_name -> natsmicro.ObjectStoreOptions
+	4,  // 16: natsmicro.stream:type_name -> natsmicro.StreamOptions
+	5,  // 17: natsmicro.chunked_io:type_name -> natsmicro.ChunkedIOOptions
+	18, // [18:18] is the sub-list for method output_type
+	18, // [18:18] is the sub-list for method input_type
+	12, // [12:18] is the sub-list for extension type_name
+	6,  // [6:12] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
 }
 
@@ -628,8 +702,8 @@ func file_natsmicro_options_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_natsmicro_options_proto_rawDesc), len(file_natsmicro_options_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
-			NumExtensions: 5,
+			NumMessages:   8,
+			NumExtensions: 6,
 			NumServices:   0,
 		},
 		GoTypes:           file_natsmicro_options_proto_goTypes,

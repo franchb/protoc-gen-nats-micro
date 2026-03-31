@@ -1,0 +1,10 @@
+version: v2
+modules:
+  - path: .
+    name: buf.build/toyz/natsmicro
+breaking:
+  use:
+    - FILE
+lint:
+  use:
+    - DEFAULT

@@ -316,6 +316,51 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Close() error {
   return s.receiver.Close()
 }
 
+{{- if $endpointOpts.ChunkedIO}}
+
+// RecvBytes drains the stream into a single byte slice.
+// WARNING: the entire payload is accumulated in memory. For large or
+// unbounded streams, prefer RecvToWriter or RecvToFile to limit memory usage.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) RecvBytes(ctx context.Context) ([]byte, error) {
+  var data []byte
+  for {
+    resp, err := s.Recv(ctx)
+    if err != nil {
+      if errors.Is(err, io.EOF) {
+        return data, nil
+      }
+      return nil, err
+    }
+    data = append(data, resp.Get{{$endpointOpts.ChunkedIO.GoFieldName}}()...)
+  }
+}
+
+// RecvToWriter drains the stream into w without materializing the whole payload.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) RecvToWriter(ctx context.Context, w io.Writer) error {
+  for {
+    resp, err := s.Recv(ctx)
+    if err != nil {
+      if errors.Is(err, io.EOF) {
+        return nil
+      }
+      return err
+    }
+    if _, err := w.Write(resp.Get{{$endpointOpts.ChunkedIO.GoFieldName}}()); err != nil {
+      return fmt.Errorf("failed to write chunk: %w", err)
+    }
+  }
+}
+
+// RecvToFile drains the stream into a file at path atomically.
+// The file is written to a temporary location first, then renamed into place.
+// On error, no partial file is left at path.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) RecvToFile(ctx context.Context, path string) error {
+  return writeFileAtomically(path, func(w io.Writer) error {
+    return s.RecvToWriter(ctx, w)
+  })
+}
+{{- end}}
+
 // {{.GoName}} initiates a server-streaming RPC call.
 // Returns a stream that yields responses from the server.
 func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{{.Input.GoIdent.GoName}}) (*{{$.Service.GoName}}_{{.GoName}}_ClientStream, error) {
@@ -539,6 +584,14 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context
     return nil, fmt.Errorf("failed to receive response: %w", err)
   }
 
+  if code, description, ok := checkStreamErrorHeaders(natsMsg.Header); ok {
+    return nil, &{{$.Service.GoName}}Error{
+      Code:    code,
+      Method:  "{{.GoName}}",
+      Message: description,
+    }
+  }
+
   var resp {{.Output.GoIdent.GoName}}
   if s.useJSON {
     if err := protojson.Unmarshal(natsMsg.Data, &resp); err != nil {
@@ -551,6 +604,45 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context
   }
   return &resp, nil
 }
+
+{{- if $endpointOpts.ChunkedIO}}
+
+// SendReader copies r into chunked stream messages.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) SendReader(r io.Reader, chunkSize int) error {
+  if chunkSize <= 0 {
+    chunkSize = {{$endpointOpts.ChunkedIO.DefaultChunkSize}}
+  }
+
+  buf := make([]byte, chunkSize)
+  for {
+    n, err := r.Read(buf)
+    if n > 0 {
+      if sendErr := s.SendBytes(buf[:n]); sendErr != nil {
+        return sendErr
+      }
+    }
+    if err != nil {
+      if errors.Is(err, io.EOF) {
+        return nil
+      }
+      return fmt.Errorf("failed to read chunk: %w", err)
+    }
+  }
+}
+
+// SendFile streams a file to the server in chunked messages.
+// On error, some chunks may have already been transmitted; the caller
+// should handle partial-send semantics at the application level.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) SendFile(path string, chunkSize int) error {
+  f, err := os.Open(path)
+  if err != nil {
+    return fmt.Errorf("failed to open file: %w", err)
+  }
+  defer f.Close()
+
+  return s.SendReader(f, chunkSize)
+}
+{{- end}}
 
 // {{.GoName}} initiates a client-streaming RPC call.
 func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context) (*{{$.Service.GoName}}_{{.GoName}}_ClientStream, error) {

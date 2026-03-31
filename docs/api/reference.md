@@ -87,13 +87,44 @@ Per-method auto-persistence to NATS Object Store using `option (natsmicro.object
 | `bucket`         | `string` | **Required** | Object store bucket name                 |
 | `key_template`   | `string` | **Required** | Key template with `{field}` placeholders |
 | `description`    | `string` | —            | Bucket description                       |
-| `max_chunk_size` | `int32`  | —            | Max chunk size for large objects         |
 
 ```protobuf
 rpc GenerateReport(ReportReq) returns (ReportResp) {
   option (natsmicro.object_store) = {
     bucket: "reports"
     key_template: "report.{id}"
+  };
+}
+```
+
+## Chunked I/O Options
+
+Per-method helper generation for simple blob transfer over streaming RPC using `option (natsmicro.chunked_io)`.
+
+| Option               | Type     | Default  | Description                                          |
+| -------------------- | -------- | -------- | ---------------------------------------------------- |
+| `chunk_field`        | `string` | `"data"` | Name of the bytes field carrying each streamed chunk |
+| `default_chunk_size` | `int32`  | `65536`  | Default helper chunk size in bytes                   |
+
+Constraints:
+
+- Go-only in the current release.
+- Valid only on server-streaming and client-streaming methods.
+- The streamed message must contain exactly one `bytes` field matching `chunk_field`.
+- Metadata belongs in the unary request or final unary response, not in chunk messages.
+
+```protobuf
+message SnapshotChunk {
+  bytes data = 1;
+}
+
+rpc ExportSnapshot(ExportSnapshotRequest) returns (stream SnapshotChunk) {
+  option (natsmicro.chunked_io) = {};
+}
+
+rpc ImportSnapshot(stream SnapshotChunk) returns (ImportSnapshotResponse) {
+  option (natsmicro.chunked_io) = {
+    default_chunk_size: 131072
   };
 }
 ```
