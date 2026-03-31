@@ -168,18 +168,29 @@ rpc ImportSnapshot(stream SnapshotChunk) returns (ImportSnapshotResponse) {
 }
 ```
 
-Current scope:
+Constraints:
 
-- Go client helpers are generated for server-streaming downloads and client-streaming uploads.
 - Bidirectional methods are intentionally rejected.
 - Chunk messages must stay simple: exactly one `bytes` field, with metadata kept in the request or final response.
 
-Generated Go helpers:
+### Generated Helpers by Language
 
-- Download streams: `RecvBytes(ctx)`, `RecvToWriter(ctx, w)`, `RecvToFile(ctx, path)` — `RecvToFile` writes atomically (temp file + rename); no partial file is left on error.
-- Upload streams: `SendBytes(data)`, `SendReader(r, chunkSize)`, `SendFile(path, chunkSize)` — upload helpers are stream-first; on error some chunks may have already been transmitted.
+**Go** — full download and upload helpers:
 
-Example:
+- Download: `RecvBytes(ctx)`, `RecvToWriter(ctx, w)`, `RecvToFile(ctx, path)` — `RecvToFile` writes atomically (temp file + rename); no partial file is left on error.
+- Upload: `SendBytes(data)`, `SendReader(r, chunkSize)`, `SendFile(path, chunkSize)` — upload helpers are stream-first; on error some chunks may have already been transmitted.
+
+**TypeScript** — download helpers only (client-streaming not yet supported):
+
+- Download: `recvBytes()` — drains the stream into a single `Uint8Array`.
+
+**Python** — download helpers only (client-streaming not yet supported):
+
+- Download: `recv_bytes()` — drains the stream into a single `bytes` object.
+
+### Examples
+
+**Go:**
 
 ```go
 download, err := client.ExportSnapshot(ctx, &ExportSnapshotRequest{Id: "snap-1"})
@@ -191,6 +202,20 @@ if err != nil { /* handle */ }
 if err := upload.SendFile("/tmp/snapshot.bin", 0); err != nil { /* handle */ }
 resp, err := upload.CloseAndRecv(ctx)
 _ = resp
+```
+
+**TypeScript:**
+
+```typescript
+const stream = await client.exportSnapshot(new ExportSnapshotRequest({ id: 'snap-1' }));
+const data: Uint8Array = await stream.recvBytes();
+```
+
+**Python:**
+
+```python
+stream = await client.export_snapshot(ExportSnapshotRequest(id="snap-1"))
+data: bytes = await stream.recv_bytes()
 ```
 
 ## Stream Types Reference
@@ -227,6 +252,8 @@ _ = resp
 | Server-streaming (client)  | ✅  |     ✅     |   ✅   |
 | Client-streaming           | ✅  |     —      |   —    |
 | Bidi-streaming             | ✅  |     —      |   —    |
+| Chunked I/O (download)     | ✅  |     ✅     |   ✅   |
+| Chunked I/O (upload)       | ✅  |     —      |   —    |
 
 ::: tip
 Check out the [streaming-go example](https://github.com/Toyz/protoc-gen-nats-micro/tree/main/examples/streaming-go) for a complete working demo of all four RPC patterns.

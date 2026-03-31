@@ -254,35 +254,43 @@ class {{$serviceName}}Client:
         req: pb.{{.Input.GoIdent.GoName}},
         headers: Optional[Dict[str, str]] = None,
         timeout: Optional[float] = None
+{{- if $methodOptions.ChunkedIO}}
+    ) -> "{{$serviceName}}_{{.GoName}}_ChunkedReceiver":
+{{- else}}
     ) -> "ClientStreamReceiver":
+{{- end}}
         """{{.Comments.Leading}} (server-streaming)
-        
-        Returns a ClientStreamReceiver to iterate over streamed responses.
+
+        Returns a stream receiver to iterate over streamed responses.
         """
         subject = f"{self._subject_prefix}.{{ToSnakeCase .GoName}}"
-        
+
         # Serialize request
         {{- if $serviceOptions.UseJSON}}
         request_data = MessageToJson(req).encode()
         {{- else}}
         request_data = req.SerializeToString()
         {{- end}}
-        
+
         # Create inbox for receiving stream messages
         inbox = self._nc.new_inbox()
         sub = await self._nc.subscribe(inbox)
-        
+
         # Send request with Reply-To header
         send_headers = headers.copy() if headers else {}
         send_headers["Reply-To"] = inbox
-        
+
         await self._nc.publish(
             subject,
             request_data,
             headers=send_headers
         )
-        
+
+{{- if $methodOptions.ChunkedIO}}
+        return {{$serviceName}}_{{.GoName}}_ChunkedReceiver(sub, pb.{{.Output.GoIdent.GoName}}, {{$serviceOptions.UseJSON}})
+{{- else}}
         return ClientStreamReceiver(sub, pb.{{.Output.GoIdent.GoName}}, {{$serviceOptions.UseJSON}})
+{{- end}}
     {{- end}}
     {{- end}}
 
@@ -340,3 +348,28 @@ class ClientStreamReceiver:
     async def close(self):
         """Unsubscribe from the stream"""
         await self._sub.unsubscribe()
+
+{{range .Service.Methods -}}
+{{- $methodOptions := GetEndpointOptions . -}}
+{{- if not $methodOptions.Skip -}}
+{{- if IsServerStreaming . -}}
+{{- if not (IsClientStreaming .) -}}
+{{- if $methodOptions.ChunkedIO}}
+
+class {{$serviceName}}_{{.GoName}}_ChunkedReceiver(ClientStreamReceiver):
+    """Chunked stream receiver for {{.GoName}} with download convenience helpers."""
+
+    async def recv_bytes(self) -> bytes:
+        """Drain the entire stream into a single bytes object.
+        WARNING: the entire payload is accumulated in memory. For large or
+        unbounded streams, iterate the receiver directly instead.
+        """
+        chunks = []
+        async for msg in self:
+            chunks.append(msg.{{$methodOptions.ChunkedIO.ChunkField}})
+        return b"".join(chunks)
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end}}

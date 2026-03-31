@@ -27,7 +27,11 @@ export interface I{{.Service.GoName}}NatsClient {
 {{- end}}
 {{- else if IsServerStreaming .}}
 {{- if not (IsClientStreaming .)}}
+{{- if $endpointOpts.ChunkedIO}}
+  {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<{{$.Service.GoName}}_{{.GoName}}_ChunkedReceiver>;
+{{- else}}
   {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>>;
+{{- end}}
 {{- end}}
 {{- end}}
 {{- end}}
@@ -219,25 +223,35 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
    * {{.GoName}} initiates a server-streaming RPC call.
    * Returns a receiver that yields response messages from the server.
    */
+{{- if $endpointOpts.ChunkedIO}}
+  async {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<{{$.Service.GoName}}_{{.GoName}}_ChunkedReceiver> {
+{{- else}}
   async {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>> {
+{{- end}}
     const subject = `${this.subjectPrefix}.{{ToSnakeCase .GoName}}`;
     const data = pb.{{.Input.GoIdent.GoName}}.toBinary(request);
-    
+
     // Create inbox for receiving streamed responses
-    const inbox = this.nc.options.inboxPrefix 
+    const inbox = this.nc.options.inboxPrefix
       ? `${this.nc.options.inboxPrefix}.${Date.now()}.${Math.random().toString(36).slice(2)}`
       : `_INBOX.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-    
+
     const sub = this.nc.subscribe(inbox);
-    
+
     // Send request with inbox as Reply-To
     const h = headers();
     h.set('Reply-To', inbox);
     this.nc.publish(subject, data, { headers: h });
-    
+
+{{- if $endpointOpts.ChunkedIO}}
+    return new {{$.Service.GoName}}_{{.GoName}}_ChunkedReceiver(sub, (msgData: Uint8Array) => {
+      return pb.{{.Output.GoIdent.GoName}}.fromBinary(msgData);
+    });
+{{- else}}
     return new ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>(sub, (msgData: Uint8Array) => {
       return pb.{{.Output.GoIdent.GoName}}.fromBinary(msgData);
     });
+{{- end}}
   }
 {{- end}}
 {{- end}}
@@ -297,3 +311,41 @@ export class ClientStreamReceiver<T> {
     this.sub.unsubscribe();
   }
 }
+{{range .Service.Methods -}}
+{{- $endpointOpts := GetEndpointOptions . -}}
+{{- if not $endpointOpts.Skip -}}
+{{- if IsServerStreaming . -}}
+{{- if not (IsClientStreaming .) -}}
+{{- if $endpointOpts.ChunkedIO}}
+
+/**
+ * Chunked stream receiver for {{.GoName}} with download convenience helpers.
+ */
+export class {{$.Service.GoName}}_{{.GoName}}_ChunkedReceiver extends ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}> {
+  /**
+   * recvBytes drains the entire stream into a single Uint8Array.
+   * WARNING: the entire payload is accumulated in memory. For large or
+   * unbounded streams, iterate the receiver directly instead.
+   */
+  async recvBytes(): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    let totalLength = 0;
+    for await (const msg of this) {
+      const chunk = msg.{{ToCamelCase $endpointOpts.ChunkedIO.ChunkField}};
+      chunks.push(chunk);
+      totalLength += chunk.length;
+    }
+    const result = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return result;
+  }
+}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end}}
