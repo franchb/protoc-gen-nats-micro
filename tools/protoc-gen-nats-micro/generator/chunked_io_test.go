@@ -312,6 +312,135 @@ func TestGenerateFileEmitsChunkedHelpersForTypeScript(t *testing.T) {
 	}
 }
 
+func TestGenerateFileEmitsClientStreamingForTypeScript(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("SumRequest", stringField("value", 1)),
+		messageDescriptor("SumResponse", stringField("total", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Sum", "SumRequest", "SumResponse", true, false, nil),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewTypeScriptLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.ts", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	var tsFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats.pb.ts") && !strings.HasPrefix(f.GetName(), "test/shared") {
+			tsFile = f.GetContent()
+			break
+		}
+	}
+	if tsFile == "" {
+		t.Fatal("failed to find generated TypeScript service file")
+	}
+
+	// ClientStreamSender class should be generated
+	if !strings.Contains(tsFile, "ClientStreamSender") {
+		t.Error("TS file missing ClientStreamSender class")
+	}
+
+	// closeAndRecv method should be present
+	if !strings.Contains(tsFile, "closeAndRecv") {
+		t.Error("TS file missing closeAndRecv() method")
+	}
+
+	// send method should be present
+	if !strings.Contains(tsFile, "send(") {
+		t.Error("TS file missing send() method")
+	}
+
+	// Nats-Stream-Inbox header should be used in the service handler
+	if !strings.Contains(tsFile, "Nats-Stream-Inbox") {
+		t.Error("TS file missing Nats-Stream-Inbox header usage")
+	}
+
+	// Client method should initiate handshake
+	if !strings.Contains(tsFile, "Nats-Stream-Inbox") {
+		t.Error("TS file should use Nats-Stream-Inbox in handshake")
+	}
+
+	// Interface should have client-streaming method
+	if !strings.Contains(tsFile, "sum(): Promise<ClientStreamSender<") {
+		t.Error("TS interface missing client-streaming method signature")
+	}
+
+	// Service interface should have client-streaming handler
+	if !strings.Contains(tsFile, "sum(stream: AsyncIterableIterator<") {
+		t.Error("TS service interface missing client-streaming handler signature")
+	}
+}
+
+func TestGenerateFileEmitsChunkedUploadForTypeScript(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
+		messageDescriptor("UploadResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewTypeScriptLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.ts", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	var tsFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats.pb.ts") && !strings.HasPrefix(f.GetName(), "test/shared") {
+			tsFile = f.GetContent()
+			break
+		}
+	}
+	if tsFile == "" {
+		t.Fatal("failed to find generated TypeScript service file")
+	}
+
+	// ChunkedClientStreamSender subclass should be generated
+	if !strings.Contains(tsFile, "ChunkedClientStreamSender") {
+		t.Error("TS file missing ChunkedClientStreamSender subclass")
+	}
+
+	// sendBytes method should be present
+	if !strings.Contains(tsFile, "sendBytes") {
+		t.Error("TS file missing sendBytes() method")
+	}
+
+	// ChunkedClientStreamSender should extend ClientStreamSender
+	if !strings.Contains(tsFile, "extends ClientStreamSender") {
+		t.Error("ChunkedClientStreamSender should extend ClientStreamSender")
+	}
+
+	// Method return type should be the chunked sender
+	if !strings.Contains(tsFile, "Promise<BlobService_Upload_ChunkedClientStreamSender>") {
+		t.Error("TS file should return ChunkedClientStreamSender from upload method")
+	}
+
+	// Nats-Stream-Inbox should be used
+	if !strings.Contains(tsFile, "Nats-Stream-Inbox") {
+		t.Error("TS file missing Nats-Stream-Inbox header usage")
+	}
+}
+
 func TestGenerateFileEmitsChunkedHelpersForPython(t *testing.T) {
 	// Only server-streaming (download) — Python has no client-streaming support yet.
 	file := buildTestFile(t, []*descriptorpb.DescriptorProto{

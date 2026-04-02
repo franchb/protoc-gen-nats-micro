@@ -180,9 +180,10 @@ Constraints:
 - Download: `RecvBytes(ctx)`, `RecvToWriter(ctx, w)`, `RecvToFile(ctx, path)` — `RecvToFile` writes atomically (temp file + rename); no partial file is left on error.
 - Upload: `SendBytes(data)`, `SendReader(r, chunkSize)`, `SendFile(path, chunkSize)` — upload helpers are stream-first; on error some chunks may have already been transmitted.
 
-**TypeScript** — download helpers only (client-streaming not yet supported):
+**TypeScript** — download and upload helpers available:
 
 - Download: `recvBytes()` — drains the stream into a single `Uint8Array`.
+- Upload: `sendBytes(data: Uint8Array)` — wraps raw bytes into the chunk message and sends it via the client-streaming sender.
 
 **Python** — download helpers only (client-streaming not yet supported):
 
@@ -204,11 +205,20 @@ resp, err := upload.CloseAndRecv(ctx)
 _ = resp
 ```
 
-**TypeScript:**
+**TypeScript (download):**
 
 ```typescript
 const stream = await client.exportSnapshot(new ExportSnapshotRequest({ id: 'snap-1' }));
 const data: Uint8Array = await stream.recvBytes();
+```
+
+**TypeScript (upload):**
+
+```typescript
+const sender = await client.importSnapshot();
+sender.sendBytes(chunk1);
+sender.sendBytes(chunk2);
+const response = await sender.closeAndRecv();
 ```
 
 **Python:**
@@ -250,10 +260,10 @@ data: bytes = await stream.recv_bytes()
 | -------------------------- | :-: | :--------: | :----: |
 | Server-streaming (service) | ✅  |     ✅     |   ✅   |
 | Server-streaming (client)  | ✅  |     ✅     |   ✅   |
-| Client-streaming           | ✅  |     —      |   —    |
+| Client-streaming           | ✅  |     ✅     |   —    |
 | Bidi-streaming             | ✅  |     —      |   —    |
 | Chunked I/O (download)     | ✅  |     ✅     |   ✅   |
-| Chunked I/O (upload)       | ✅  |     —      |   —    |
+| Chunked I/O (upload)       | ✅  |     ✅     |   —    |
 
 ::: tip
 Check out the [streaming-go example](https://github.com/Toyz/protoc-gen-nats-micro/tree/main/examples/streaming-go) for a complete working demo of all four RPC patterns.
