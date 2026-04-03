@@ -107,6 +107,7 @@ async def register_{{ToSnakeCase $serviceName}}(
     
     # Auto-create KV and Object Store buckets if JetStream is available
     if js_context is not None:
+        pass  # auto-create buckets below if configured
         {{- range .Service.Methods}}
         {{- $eopts := GetEndpointOptions .}}
         {{- if $eopts.KVStore}}
