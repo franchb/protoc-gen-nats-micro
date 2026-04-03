@@ -185,9 +185,10 @@ Constraints:
 - Download: `recvBytes()` — drains the stream into a single `Uint8Array`.
 - Upload: `sendBytes(data: Uint8Array)` — wraps raw bytes into the chunk message and sends it via the client-streaming sender.
 
-**Python** — download helpers only (client-streaming not yet supported):
+**Python** — download and upload helpers:
 
 - Download: `recv_bytes()` — drains the stream into a single `bytes` object.
+- Upload: `send_bytes(data: bytes)` — wraps raw bytes into the chunk message and sends it via the client-streaming sender.
 
 ### Examples
 
@@ -260,10 +261,10 @@ data: bytes = await stream.recv_bytes()
 | -------------------------- | :-: | :--------: | :----: |
 | Server-streaming (service) | ✅  |     ✅     |   ✅   |
 | Server-streaming (client)  | ✅  |     ✅     |   ✅   |
-| Client-streaming           | ✅  |     ✅     |   —    |
+| Client-streaming           | ✅  |     ✅     |   ✅   |
 | Bidi-streaming             | ✅  |     —      |   —    |
 | Chunked I/O (download)     | ✅  |     ✅     |   ✅   |
-| Chunked I/O (upload)       | ✅  |     ✅     |   —    |
+| Chunked I/O (upload)       | ✅  |     ✅     |   ✅   |
 
 ::: tip
 Check out the [streaming-go example](https://github.com/Toyz/protoc-gen-nats-micro/tree/main/examples/streaming-go) for a complete working demo of all four RPC patterns.
