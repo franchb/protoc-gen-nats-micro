@@ -105,6 +105,29 @@ func TestGenerateFileRejectsChunkedIOWithExtraFields(t *testing.T) {
 	}
 }
 
+func TestGenerateFileRejectsChunkedIOWithRepeatedBytes(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("DownloadRequest", stringField("id", 1)),
+		messageDescriptor("SnapshotChunk", repeatedBytesField("data", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewGoLanguage()
+
+	err := GenerateFile(gen, target, lang)
+	if err == nil {
+		t.Fatal("GenerateFile() succeeded, want singular bytes validation error")
+	}
+	if !strings.Contains(err.Error(), "singular bytes") {
+		t.Fatalf("GenerateFile() error = %q, want singular bytes validation failure", err)
+	}
+}
+
 func TestGenerateFileEmitsChunkedHelpersForValidStreamingMethods(t *testing.T) {
 	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
 		messageDescriptor("DownloadRequest", stringField("id", 1)),
@@ -727,5 +750,14 @@ func stringField(name string, number int32) *descriptorpb.FieldDescriptorProto {
 		Number: proto.Int32(number),
 		Label:  descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
 		Type:   descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum(),
+	}
+}
+
+func repeatedBytesField(name string, number int32) *descriptorpb.FieldDescriptorProto {
+	return &descriptorpb.FieldDescriptorProto{
+		Name:   proto.String(name),
+		Number: proto.Int32(number),
+		Label:  descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum(),
+		Type:   descriptorpb.FieldDescriptorProto_TYPE_BYTES.Enum(),
 	}
 }

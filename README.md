@@ -825,9 +825,9 @@ task --list
 
 Streaming RPC is supported across the generator today.
 
-- Use [Streaming RPC](docs/guide/streaming.md) for typed server-streaming, client-streaming, and bidi helpers over NATS.
-- Use [KV & Object Store](docs/guide/kv-object-store.md) when you want post-RPC persistence of whole protobuf messages.
-- Use `chunked_io` on streaming blob methods for generated download helpers (Go, TypeScript, Python) and upload helpers (Go only).
+- [Streaming RPC](docs/guide/streaming.md) provides typed server-streaming, client-streaming, and bidi helpers over NATS.
+- Persist whole protobuf messages with [KV & Object Store](docs/guide/kv-object-store.md) for post-RPC storage.
+- Enable `chunked_io` on streaming blob methods to generate download helpers (Go, TypeScript, Python) and upload helpers (Go only).
 
 For larger payload transfer, prefer a streaming RPC with a simple `bytes` chunk message instead of overloading `object_store`.
 

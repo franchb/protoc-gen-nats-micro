@@ -350,8 +350,8 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
 
 **Explicit write semantics:**
 
-- `KV_WRITE_MODE_LAST_WRITE_WINS` — create with `key_ttl` for new keys, then overwrite existing keys with `kv.Put(...)`
-- `KV_WRITE_MODE_COMPARE_AND_SET` — create with `key_ttl` for new keys, then update existing keys with revision-matching CAS
+- `KV_WRITE_MODE_LAST_WRITE_WINS` — create with `ttl` for new keys, then overwrite existing keys with `kv.Put(...)`
+- `KV_WRITE_MODE_COMPARE_AND_SET` — create with `ttl` for new keys, then update existing keys with revision-matching CAS
 - `KV_WRITE_MODE_CREATE_ONLY` — only create the key; existing-key writes fail
 
 **Persist failure policy:**
@@ -359,7 +359,7 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
 - `KV_PERSIST_FAILURE_POLICY_BEST_EFFORT` — log the KV failure and still return the RPC response
 - `KV_PERSIST_FAILURE_POLICY_REQUIRED` — fail the RPC if KV persistence fails
 
-`key_ttl` without `write_mode` uses legacy compatibility behavior. In this fork, prefer setting both `write_mode` and `persist_failure_policy` explicitly.
+`ttl` without `write_mode` uses legacy compatibility behavior. In this fork, prefer setting both `write_mode` and `persist_failure_policy` explicitly.
 
 **Graceful degradation:** If no JetStream context is provided via `WithJetStream()`, KV writes and bucket creation are skipped in best-effort mode. In required mode, the RPC fails instead of silently succeeding.
 

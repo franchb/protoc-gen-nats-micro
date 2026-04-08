@@ -837,7 +837,7 @@ func TestAPIDocsDescribeExplicitKVSemantics(t *testing.T) {
 		"`persist_failure_policy`",
 		"`KV_WRITE_MODE_COMPARE_AND_SET`",
 		"`KV_PERSIST_FAILURE_POLICY_REQUIRED`",
-		"`key_ttl` without `write_mode` uses legacy compatibility behavior",
+		"`ttl` without `write_mode` uses legacy compatibility behavior",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("API.md is missing explicit KV semantics guidance %q", required)

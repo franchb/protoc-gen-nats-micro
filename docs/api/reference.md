@@ -128,6 +128,7 @@ Constraints:
 - Upload helpers (client-streaming) are currently Go-only.
 - Valid only on server-streaming and client-streaming methods.
 - The streamed message must contain exactly one `bytes` field matching `chunk_field`.
+- `default_chunk_size` must be `>= 0`.
 - Metadata belongs in the unary request or final unary response, not in chunk messages.
 
 ```protobuf
@@ -181,7 +182,7 @@ Static segments are kept as-is. `{field}` placeholders are replaced with the cor
 
 | Option                            | Description                  |
 | --------------------------------- | ---------------------------- |
-| `WithClientSubjectPrefix(prefix)` | Override subject prefix      |
+| `WithNatsClientSubjectPrefix(prefix)` | Override subject prefix      |
 | `WithClientInterceptor(fn)`       | Add client-side interceptor  |
 | `WithClientJetStream(js)`         | Enable KV/Object Store reads |
 

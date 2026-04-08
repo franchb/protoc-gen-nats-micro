@@ -54,7 +54,7 @@ Preferred fork usage:
 
 - `KV_WRITE_MODE_COMPARE_AND_SET` for explicit strict updates
 - `KV_PERSIST_FAILURE_POLICY_REQUIRED` when KV persistence is part of the RPC contract
-- `key_ttl` without `write_mode` is legacy compatibility behavior
+- `ttl` without `write_mode` is legacy compatibility behavior
 
 ### Generated Methods
 
@@ -87,10 +87,12 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
 
 | Option           | Type     | Description                             |
 | ---------------- | -------- | --------------------------------------- |
-| `bucket`         | `string` | Object store bucket name (auto-created) |
-| `key_template`   | `string` | Template for building the key           |
-| `description`    | `string` | Bucket description                      |
-| `compression`    | `bool`   | Enable native JetStream bucket compression |
+| `bucket`         | `string`   | Object store bucket name (auto-created) |
+| `key_template`   | `string`   | Template for building the key           |
+| `ttl`            | `Duration` | Time-to-live for objects (optional)     |
+| `description`    | `string`   | Bucket description                      |
+| `client_only`    | `bool`     | Skip server-side auto-persist — only generate client read/write methods |
+| `compression`    | `bool`     | Enable native JetStream bucket compression |
 
 ### Generated Methods
 
