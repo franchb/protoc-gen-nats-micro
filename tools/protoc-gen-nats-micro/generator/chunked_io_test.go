@@ -176,12 +176,20 @@ func TestGenerateFileEmitsChunkedHelpersForValidStreamingMethods(t *testing.T) {
 		t.Error("RecvToFile should use writeFileAtomically for atomic writes")
 	}
 
-	// Send helpers should NOT be in the main file
-	sendSnippets := []string{"SendBytes", "SendReader", "SendFile"}
-	for _, snippet := range sendSnippets {
-		if strings.Contains(mainFile, "func (s *BlobService_Upload_ClientStream) "+snippet) {
-			t.Errorf("main file should not contain send helper %q (moved to build-tagged files)", snippet)
+	// SendReader and SendFile should be in the main file (not build-tagged)
+	mainSendSnippets := []string{
+		"func (s *BlobService_Upload_ClientStream) SendReader(r io.Reader, chunkSize int) error",
+		"func (s *BlobService_Upload_ClientStream) SendFile(path string, chunkSize int) error",
+	}
+	for _, snippet := range mainSendSnippets {
+		if !strings.Contains(mainFile, snippet) {
+			t.Errorf("main file missing send snippet %q", snippet)
 		}
+	}
+
+	// SendBytes should NOT be in the main file (lives in build-tagged files)
+	if strings.Contains(mainFile, "func (s *BlobService_Upload_ClientStream) SendBytes") {
+		t.Error("main file should not contain SendBytes (moved to build-tagged files)")
 	}
 
 	// Find the open-mode chunked send file
@@ -201,16 +209,17 @@ func TestGenerateFileEmitsChunkedHelpersForValidStreamingMethods(t *testing.T) {
 		t.Error("chunked send file should have //go:build !protoopaque")
 	}
 
-	// Send helpers should be in the chunked file
-	openSendSnippets := []string{
-		"func (s *BlobService_Upload_ClientStream) SendBytes(data []byte) error",
-		"func (s *BlobService_Upload_ClientStream) SendReader(r io.Reader, chunkSize int) error",
-		"func (s *BlobService_Upload_ClientStream) SendFile(path string, chunkSize int) error",
+	// Only SendBytes should be in the chunked file
+	if !strings.Contains(chunkedFile, "func (s *BlobService_Upload_ClientStream) SendBytes(data []byte) error") {
+		t.Error("chunked file missing SendBytes")
 	}
-	for _, snippet := range openSendSnippets {
-		if !strings.Contains(chunkedFile, snippet) {
-			t.Errorf("chunked file missing send snippet %q", snippet)
-		}
+
+	// SendReader and SendFile should NOT be in the chunked file (moved to main)
+	if strings.Contains(chunkedFile, "SendReader") {
+		t.Error("chunked file should not contain SendReader (moved to main file)")
+	}
+	if strings.Contains(chunkedFile, "SendFile") {
+		t.Error("chunked file should not contain SendFile (moved to main file)")
 	}
 
 	// Open-mode SendBytes should use struct literal
@@ -238,6 +247,400 @@ func TestGenerateFileEmitsChunkedHelpersForValidStreamingMethods(t *testing.T) {
 	// Opaque-mode SendBytes should use setter
 	if !strings.Contains(opaqueFile, ".SetData(data)") {
 		t.Error("opaque-mode SendBytes should use .SetData() setter")
+	}
+}
+
+func TestGenerateFileEmitsChunkedHelpersForTypeScript(t *testing.T) {
+	// Only server-streaming (download) — TS has no client-streaming support yet.
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("DownloadRequest", stringField("id", 1)),
+		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewTypeScriptLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.ts", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	var tsFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats.pb.ts") && !strings.HasPrefix(f.GetName(), "test/shared") {
+			tsFile = f.GetContent()
+			break
+		}
+	}
+	if tsFile == "" {
+		t.Fatal("failed to find generated TypeScript service file")
+	}
+
+	// ClientStreamReceiver should have recvBytes method inline
+	if !strings.Contains(tsFile, "recvBytes") {
+		t.Error("TS file missing recvBytes() method on ClientStreamReceiver")
+	}
+
+	// recvToWriter method should be present
+	if !strings.Contains(tsFile, "recvToWriter") {
+		t.Error("TS file missing recvToWriter() method")
+	}
+
+	// Method should return ClientStreamReceiver type
+	if !strings.Contains(tsFile, "Promise<ClientStreamReceiver<") {
+		t.Error("TS file should return ClientStreamReceiver from download method")
+	}
+
+	// Constructor should use ClientStreamReceiver
+	if !strings.Contains(tsFile, "new ClientStreamReceiver<") {
+		t.Error("TS file should construct ClientStreamReceiver instance")
+	}
+}
+
+func TestGenerateFileEmitsClientStreamingForTypeScript(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("SumRequest", stringField("value", 1)),
+		messageDescriptor("SumResponse", stringField("total", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Sum", "SumRequest", "SumResponse", true, false, nil),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewTypeScriptLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.ts", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	var tsFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats.pb.ts") && !strings.HasPrefix(f.GetName(), "test/shared") {
+			tsFile = f.GetContent()
+			break
+		}
+	}
+	if tsFile == "" {
+		t.Fatal("failed to find generated TypeScript service file")
+	}
+
+	// Per-method ClientStream class should be generated
+	if !strings.Contains(tsFile, "_ClientStream") {
+		t.Error("TS file missing per-method ClientStream class")
+	}
+
+	// closeAndRecv method should be present
+	if !strings.Contains(tsFile, "closeAndRecv") {
+		t.Error("TS file missing closeAndRecv() method")
+	}
+
+	// send method should be present
+	if !strings.Contains(tsFile, "send(") {
+		t.Error("TS file missing send() method")
+	}
+
+	// Nats-Stream-Inbox header should be used in the service handler
+	if !strings.Contains(tsFile, "Nats-Stream-Inbox") {
+		t.Error("TS file missing Nats-Stream-Inbox header usage")
+	}
+
+	// Interface should have client-streaming method
+	if !strings.Contains(tsFile, "sum(): Promise<BlobService_Sum_ClientStream>") {
+		t.Error("TS interface missing client-streaming method signature")
+	}
+
+	// Service interface should have client-streaming handler
+	if !strings.Contains(tsFile, "sum(stream: ClientStreamReader<") {
+		t.Error("TS service interface missing client-streaming handler signature")
+	}
+}
+
+func TestGenerateFileEmitsChunkedUploadForTypeScript(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
+		messageDescriptor("UploadResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewTypeScriptLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.ts", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	var tsFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats.pb.ts") && !strings.HasPrefix(f.GetName(), "test/shared") {
+			tsFile = f.GetContent()
+			break
+		}
+	}
+	if tsFile == "" {
+		t.Fatal("failed to find generated TypeScript service file")
+	}
+
+	// Per-method ClientStream class should have sendBytes for chunked upload
+	if !strings.Contains(tsFile, "sendBytes") {
+		t.Error("TS file missing sendBytes() method on ClientStream")
+	}
+
+	// sendReader should be present for chunked upload
+	if !strings.Contains(tsFile, "sendReader") {
+		t.Error("TS file missing sendReader() method")
+	}
+
+	// sendFile should be present for chunked upload
+	if !strings.Contains(tsFile, "sendFile") {
+		t.Error("TS file missing sendFile() method")
+	}
+
+	// Per-method ClientStream class should be returned
+	if !strings.Contains(tsFile, "_ClientStream") {
+		t.Error("TS file should use per-method ClientStream class")
+	}
+
+	// Nats-Stream-Inbox should be used
+	if !strings.Contains(tsFile, "Nats-Stream-Inbox") {
+		t.Error("TS file missing Nats-Stream-Inbox header usage")
+	}
+}
+
+func TestGenerateFileEmitsChunkedHelpersForPython(t *testing.T) {
+	// Only server-streaming (download) — Python has no client-streaming support yet.
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("DownloadRequest", stringField("id", 1)),
+		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewPythonLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats_pb2.py", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	var pyFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats_pb2.py") && !strings.HasPrefix(f.GetName(), "test/shared") {
+			pyFile = f.GetContent()
+			break
+		}
+	}
+	if pyFile == "" {
+		t.Fatal("failed to find generated Python service file")
+	}
+
+	// ClientStreamReceiver should have recv_bytes method inline
+	if !strings.Contains(pyFile, "recv_bytes") {
+		t.Error("Python file missing recv_bytes() method on ClientStreamReceiver")
+	}
+
+	// recv_to_writer method should be present
+	if !strings.Contains(pyFile, "recv_to_writer") {
+		t.Error("Python file missing recv_to_writer() method")
+	}
+
+	// recv_to_file method should be present
+	if !strings.Contains(pyFile, "recv_to_file") {
+		t.Error("Python file missing recv_to_file() method")
+	}
+
+	// Method should return ClientStreamReceiver type
+	if !strings.Contains(pyFile, "ClientStreamReceiver") {
+		t.Error("Python file should reference ClientStreamReceiver")
+	}
+}
+
+func TestValidateChunkedIOWorksForAllLanguages(t *testing.T) {
+	// Validation is language-agnostic (runs before templates), but verify it
+	// works when called through GenerateFile with each language.
+	languages := []struct {
+		name string
+		lang Language
+	}{
+		{"Go", NewGoLanguage()},
+		{"TypeScript", NewTypeScriptLanguage()},
+		{"Python", NewPythonLanguage()},
+	}
+
+	// Bidi + chunked_io should be rejected for all languages
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Sync", "SnapshotChunk", "SnapshotChunk", true, true, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
+	})
+
+	for _, tt := range languages {
+		t.Run(tt.name, func(t *testing.T) {
+			gen, target := newTestPlugin(t, file)
+			err := GenerateFile(gen, target, tt.lang)
+			if err == nil {
+				t.Fatalf("%s: GenerateFile() succeeded, want bidi chunked_io validation error", tt.name)
+			}
+			if !strings.Contains(err.Error(), "bidirectional") {
+				t.Fatalf("%s: GenerateFile() error = %q, want bidirectional validation failure", tt.name, err)
+			}
+		})
+	}
+}
+
+func TestGenerateFileEmitsClientStreamingForPython(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("SumRequest", stringField("value", 1)),
+		messageDescriptor("SumResponse", stringField("total", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Sum", "SumRequest", "SumResponse", true, false, nil),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewPythonLanguage()
+
+	// Generate shared file first (required by Python)
+	shared := gen.NewGeneratedFile("test/shared_nats_pb2.py", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	if len(responseFiles) == 0 {
+		t.Fatal("GenerateFile() produced no files")
+	}
+
+	// Find the Python service file
+	var pyFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats_pb2.py") &&
+			!strings.HasSuffix(f.GetName(), "shared_nats_pb2.py") {
+			pyFile = f.GetContent()
+			break
+		}
+	}
+	if pyFile == "" {
+		t.Fatal("failed to find generated Python service file")
+	}
+
+	// Verify client-streaming code was generated
+	expectedSnippets := []string{
+		"_ClientStream",
+		"close_and_recv",
+		"async def send(",
+		"Nats-Stream-Inbox",
+		"Nats-Stream-Seq",
+		"Nats-Stream-End",
+		"async def sum(",      // client method
+		"stream_iter",         // server handler async generator
+		"client-streaming",    // docstring
+	}
+	for _, snippet := range expectedSnippets {
+		if !strings.Contains(pyFile, snippet) {
+			t.Errorf("generated Python file missing snippet %q", snippet)
+		}
+	}
+}
+
+func TestGenerateFileEmitsChunkedUploadForPython(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
+		messageDescriptor("UploadResponse", stringField("id", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewPythonLanguage()
+
+	// Generate shared file first
+	shared := gen.NewGeneratedFile("test/shared_nats_pb2.py", "")
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	responseFiles := gen.Response().File
+	if len(responseFiles) == 0 {
+		t.Fatal("GenerateFile() produced no files")
+	}
+
+	// Find the Python service file
+	var pyFile string
+	for _, f := range responseFiles {
+		if strings.HasSuffix(f.GetName(), "_nats_pb2.py") &&
+			!strings.HasSuffix(f.GetName(), "shared_nats_pb2.py") {
+			pyFile = f.GetContent()
+			break
+		}
+	}
+	if pyFile == "" {
+		t.Fatal("failed to find generated Python service file")
+	}
+
+	// Verify chunked upload helpers were generated
+	expectedSnippets := []string{
+		"_ClientStream",
+		"send_bytes",
+		"send_reader",
+		"send_file",
+		"close_and_recv",
+	}
+	for _, snippet := range expectedSnippets {
+		if !strings.Contains(pyFile, snippet) {
+			t.Errorf("generated Python file missing chunked upload snippet %q", snippet)
+		}
+	}
+
+	// Verify the send_bytes sets the chunk field via setattr
+	if !strings.Contains(pyFile, `"data"`) {
+		t.Error("send_bytes should reference the chunk field 'data'")
 	}
 }
 

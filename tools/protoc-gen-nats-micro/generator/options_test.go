@@ -118,12 +118,15 @@ func TestGenerateFileEmitsNewMicroControlWiring(t *testing.T) {
 	}
 }
 
-func TestGenerateFileImportsOSForServiceWarnings(t *testing.T) {
+func TestGenerateFileImportsOSForChunkedSend(t *testing.T) {
 	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
-		messageDescriptor("CreateBlobRequest", stringField("id", 1)),
-		messageDescriptor("CreateBlobResponse", stringField("id", 1)),
+		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
+		messageDescriptor("UploadResponse", stringField("id", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("CreateBlob", "CreateBlobRequest", "CreateBlobResponse", false, false, nil),
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -147,7 +150,7 @@ func TestGenerateFileImportsOSForServiceWarnings(t *testing.T) {
 		t.Fatal("failed to find generated Go service file")
 	}
 	if !strings.Contains(mainFile, "\"os\"") {
-		t.Fatalf("generated service file is missing os import:\n%s", mainFile)
+		t.Fatalf("generated service file is missing os import for chunked send:\n%s", mainFile)
 	}
 }
 

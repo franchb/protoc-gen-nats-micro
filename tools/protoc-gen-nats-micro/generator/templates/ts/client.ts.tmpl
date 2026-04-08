@@ -255,24 +255,28 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
   async {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>> {
     const subject = `${this.subjectPrefix}.{{ToSnakeCase .GoName}}`;
     const data = pb.{{.Input.GoIdent.GoName}}.toBinary(request);
-    
+
     // Create inbox for receiving streamed responses
-    const inbox = this.nc.options.inboxPrefix 
+    const inbox = this.nc.options.inboxPrefix
       ? `${this.nc.options.inboxPrefix}.${Date.now()}.${Math.random().toString(36).slice(2)}`
       : `_INBOX.${Date.now()}.${Math.random().toString(36).slice(2)}`;
-    
+
     const sub = this.nc.subscribe(inbox);
-    
+
     // Send request with inbox as Reply-To
     const h = headers();
     h.set('Reply-To', inbox);
     this.nc.publish(subject, data, { headers: h });
-    
+
     return new ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>(sub, (msgData: Uint8Array) => {
       return pb.{{.Output.GoIdent.GoName}}.fromBinary(msgData);
     });
   }
-{{- else}}{{/* bidi streaming */}}
+{{- end}}
+{{- end}}
+
+{{- if IsClientStreaming .}}
+{{- if IsServerStreaming .}}{{/* bidi streaming */}}
   /**
    * {{.GoName}} initiates a bidirectional streaming RPC call.
    */

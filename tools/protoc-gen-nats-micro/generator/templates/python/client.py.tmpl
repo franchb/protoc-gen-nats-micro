@@ -325,7 +325,7 @@ class {{$serviceName}}Client:
     ) -> "ClientStreamReceiver":
         """{{.Comments.Leading}} (server-streaming)
 
-        Returns a ClientStreamReceiver to iterate over streamed responses.
+        Returns a stream receiver to iterate over streamed responses.
         """
         subject = f"{self._subject_prefix}.{{ToSnakeCase .GoName}}"
 
@@ -397,7 +397,7 @@ class {{$serviceName}}Client:
 
     {{- end}}
     {{- end}}
-    
+
     def endpoints(self) -> List[EndpointInfo]:
         """Get list of endpoint info"""
         return [
@@ -670,6 +670,5 @@ class {{$serviceName}}_{{.GoName}}_BidiStream:
     async def __anext__(self):
         return await self.recv()
 {{- end}}
-
 {{- end}}
 {{- end}}

@@ -124,7 +124,8 @@ Per-method helper generation for simple blob transfer over streaming RPC using `
 
 Constraints:
 
-- Go-only in the current release.
+- Download helpers (server-streaming) are available for Go, TypeScript, and Python.
+- Upload helpers (client-streaming) are currently Go-only.
 - Valid only on server-streaming and client-streaming methods.
 - The streamed message must contain exactly one `bytes` field matching `chunk_field`.
 - Metadata belongs in the unary request or final unary response, not in chunk messages.
