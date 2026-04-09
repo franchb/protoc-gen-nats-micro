@@ -21,7 +21,7 @@ export default defineConfig({
       { text: 'Examples', link: '/examples/go' },
       {
         text: 'GitHub',
-        link: 'https://github.com/Toyz/protoc-gen-nats-micro'
+        link: 'https://github.com/franchb/protoc-gen-nats-micro'
       }
     ],
 
@@ -67,7 +67,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/Toyz/protoc-gen-nats-micro' }
+      { icon: 'github', link: 'https://github.com/franchb/protoc-gen-nats-micro' }
     ],
 
     search: {
@@ -80,7 +80,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern: 'https://github.com/Toyz/protoc-gen-nats-micro/edit/main/docs/:path',
+      pattern: 'https://github.com/franchb/protoc-gen-nats-micro/edit/main/docs/:path',
       text: 'Edit this page on GitHub'
     }
   }
