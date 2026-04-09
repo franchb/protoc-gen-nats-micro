@@ -23,6 +23,111 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// KV Store options for RPC methods
+// When set, the server handler automatically persists the response
+// into a NATS JetStream KV bucket after processing.
+// The bucket is auto-created during service registration if it doesn't exist.
+type KVWriteMode int32
+
+const (
+	KVWriteMode_KV_WRITE_MODE_UNSPECIFIED     KVWriteMode = 0
+	KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS KVWriteMode = 1
+	KVWriteMode_KV_WRITE_MODE_COMPARE_AND_SET KVWriteMode = 2
+	KVWriteMode_KV_WRITE_MODE_CREATE_ONLY     KVWriteMode = 3
+)
+
+// Enum value maps for KVWriteMode.
+var (
+	KVWriteMode_name = map[int32]string{
+		0: "KV_WRITE_MODE_UNSPECIFIED",
+		1: "KV_WRITE_MODE_LAST_WRITE_WINS",
+		2: "KV_WRITE_MODE_COMPARE_AND_SET",
+		3: "KV_WRITE_MODE_CREATE_ONLY",
+	}
+	KVWriteMode_value = map[string]int32{
+		"KV_WRITE_MODE_UNSPECIFIED":     0,
+		"KV_WRITE_MODE_LAST_WRITE_WINS": 1,
+		"KV_WRITE_MODE_COMPARE_AND_SET": 2,
+		"KV_WRITE_MODE_CREATE_ONLY":     3,
+	}
+)
+
+func (x KVWriteMode) Enum() *KVWriteMode {
+	p := new(KVWriteMode)
+	*p = x
+	return p
+}
+
+func (x KVWriteMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (KVWriteMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_natsmicro_options_proto_enumTypes[0].Descriptor()
+}
+
+func (KVWriteMode) Type() protoreflect.EnumType {
+	return &file_natsmicro_options_proto_enumTypes[0]
+}
+
+func (x KVWriteMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use KVWriteMode.Descriptor instead.
+func (KVWriteMode) EnumDescriptor() ([]byte, []int) {
+	return file_natsmicro_options_proto_rawDescGZIP(), []int{0}
+}
+
+type KVPersistFailurePolicy int32
+
+const (
+	KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_UNSPECIFIED KVPersistFailurePolicy = 0
+	KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_BEST_EFFORT KVPersistFailurePolicy = 1
+	KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED    KVPersistFailurePolicy = 2
+)
+
+// Enum value maps for KVPersistFailurePolicy.
+var (
+	KVPersistFailurePolicy_name = map[int32]string{
+		0: "KV_PERSIST_FAILURE_POLICY_UNSPECIFIED",
+		1: "KV_PERSIST_FAILURE_POLICY_BEST_EFFORT",
+		2: "KV_PERSIST_FAILURE_POLICY_REQUIRED",
+	}
+	KVPersistFailurePolicy_value = map[string]int32{
+		"KV_PERSIST_FAILURE_POLICY_UNSPECIFIED": 0,
+		"KV_PERSIST_FAILURE_POLICY_BEST_EFFORT": 1,
+		"KV_PERSIST_FAILURE_POLICY_REQUIRED":    2,
+	}
+)
+
+func (x KVPersistFailurePolicy) Enum() *KVPersistFailurePolicy {
+	p := new(KVPersistFailurePolicy)
+	*p = x
+	return p
+}
+
+func (x KVPersistFailurePolicy) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (KVPersistFailurePolicy) Descriptor() protoreflect.EnumDescriptor {
+	return file_natsmicro_options_proto_enumTypes[1].Descriptor()
+}
+
+func (KVPersistFailurePolicy) Type() protoreflect.EnumType {
+	return &file_natsmicro_options_proto_enumTypes[1]
+}
+
+func (x KVPersistFailurePolicy) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use KVPersistFailurePolicy.Descriptor instead.
+func (KVPersistFailurePolicy) EnumDescriptor() ([]byte, []int) {
+	return file_natsmicro_options_proto_rawDescGZIP(), []int{1}
+}
+
 // Service-level options for NATS microservices
 type ServiceOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -52,9 +157,13 @@ type ServiceOptions struct {
 	// "PAYMENT_FAILED") These are generated as additional constants,
 	// constructors, and checkers alongside the 7 built-in error codes
 	// (INVALID_ARGUMENT, NOT_FOUND, etc.)
-	ErrorCodes    []string `protobuf:"bytes,9,rep,name=error_codes,json=errorCodes,proto3" json:"error_codes,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ErrorCodes []string `protobuf:"bytes,9,rep,name=error_codes,json=errorCodes,proto3" json:"error_codes,omitempty"`
+	// Disable queue subscriptions for this service's grouped endpoints.
+	// When true, the generated service registers plain subscriptions instead of
+	// queue subscriptions.
+	QueueGroupDisabled bool `protobuf:"varint,10,opt,name=queue_group_disabled,json=queueGroupDisabled,proto3" json:"queue_group_disabled,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ServiceOptions) Reset() {
@@ -150,6 +259,13 @@ func (x *ServiceOptions) GetErrorCodes() []string {
 	return nil
 }
 
+func (x *ServiceOptions) GetQueueGroupDisabled() bool {
+	if x != nil {
+		return x.QueueGroupDisabled
+	}
+	return false
+}
+
 // Endpoint-level options for individual RPC methods
 type EndpointOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -161,9 +277,17 @@ type EndpointOptions struct {
 	Skip bool `protobuf:"varint,2,opt,name=skip,proto3" json:"skip,omitempty"`
 	// Endpoint metadata (optional, key-value pairs for endpoint-specific
 	// metadata) This metadata is passed to the NATS micro endpoint registration
-	Metadata      map[string]string `protobuf:"bytes,3,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Metadata map[string]string `protobuf:"bytes,3,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Disable queue subscriptions for this endpoint.
+	QueueGroupDisabled bool `protobuf:"varint,4,opt,name=queue_group_disabled,json=queueGroupDisabled,proto3" json:"queue_group_disabled,omitempty"`
+	// Subscription pending message limit for this endpoint.
+	// Use -1 for no limit, 0 to keep the library default.
+	PendingMsgLimit int32 `protobuf:"varint,5,opt,name=pending_msg_limit,json=pendingMsgLimit,proto3" json:"pending_msg_limit,omitempty"`
+	// Subscription pending byte limit for this endpoint.
+	// Use -1 for no limit, 0 to keep the library default.
+	PendingBytesLimit int32 `protobuf:"varint,6,opt,name=pending_bytes_limit,json=pendingBytesLimit,proto3" json:"pending_bytes_limit,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *EndpointOptions) Reset() {
@@ -217,10 +341,27 @@ func (x *EndpointOptions) GetMetadata() map[string]string {
 	return nil
 }
 
-// KV Store options for RPC methods
-// When set, the server handler automatically persists the response
-// into a NATS JetStream KV bucket after processing.
-// The bucket is auto-created during service registration if it doesn't exist.
+func (x *EndpointOptions) GetQueueGroupDisabled() bool {
+	if x != nil {
+		return x.QueueGroupDisabled
+	}
+	return false
+}
+
+func (x *EndpointOptions) GetPendingMsgLimit() int32 {
+	if x != nil {
+		return x.PendingMsgLimit
+	}
+	return 0
+}
+
+func (x *EndpointOptions) GetPendingBytesLimit() int32 {
+	if x != nil {
+		return x.PendingBytesLimit
+	}
+	return 0
+}
+
 type KVStoreOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// KV bucket name (e.g., "user_profiles")
@@ -238,7 +379,24 @@ type KVStoreOptions struct {
 	// If true, skip server-side auto-persist — only generate client read/write
 	// methods Use this when you want direct client access to KV without RPC
 	// involvement
-	ClientOnly    bool `protobuf:"varint,6,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	ClientOnly bool `protobuf:"varint,6,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	// Bucket-specific metadata (optional).
+	Metadata map[string]string `protobuf:"bytes,7,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// How long to keep delete markers for TTL-based expirations.
+	// Required for per-key TTL support.
+	LimitMarkerTtl *durationpb.Duration `protobuf:"bytes,8,opt,name=limit_marker_ttl,json=limitMarkerTtl,proto3" json:"limit_marker_ttl,omitempty"`
+	// TTL applied when the generator creates a new KV key.
+	// Existing keys retain their current TTL semantics.
+	KeyTtl *durationpb.Duration `protobuf:"bytes,9,opt,name=key_ttl,json=keyTtl,proto3" json:"key_ttl,omitempty"`
+	// TTL applied to generated KV purge helpers so delete markers expire.
+	PurgeTtl *durationpb.Duration `protobuf:"bytes,10,opt,name=purge_ttl,json=purgeTtl,proto3" json:"purge_ttl,omitempty"`
+	// How generated writes behave when the key already exists.
+	WriteMode KVWriteMode `protobuf:"varint,11,opt,name=write_mode,json=writeMode,proto3,enum=natsmicro.KVWriteMode" json:"write_mode,omitempty"`
+	// Whether generated server auto-persist failures fail the RPC or are logged.
+	PersistFailurePolicy KVPersistFailurePolicy `protobuf:"varint,12,opt,name=persist_failure_policy,json=persistFailurePolicy,proto3,enum=natsmicro.KVPersistFailurePolicy" json:"persist_failure_policy,omitempty"`
+	// Enable native JetStream compression for this KV bucket.
+	// This maps to the client library's bucket compression flag.
+	Compression   bool `protobuf:"varint,13,opt,name=compression,proto3" json:"compression,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -315,6 +473,55 @@ func (x *KVStoreOptions) GetClientOnly() bool {
 	return false
 }
 
+func (x *KVStoreOptions) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+func (x *KVStoreOptions) GetLimitMarkerTtl() *durationpb.Duration {
+	if x != nil {
+		return x.LimitMarkerTtl
+	}
+	return nil
+}
+
+func (x *KVStoreOptions) GetKeyTtl() *durationpb.Duration {
+	if x != nil {
+		return x.KeyTtl
+	}
+	return nil
+}
+
+func (x *KVStoreOptions) GetPurgeTtl() *durationpb.Duration {
+	if x != nil {
+		return x.PurgeTtl
+	}
+	return nil
+}
+
+func (x *KVStoreOptions) GetWriteMode() KVWriteMode {
+	if x != nil {
+		return x.WriteMode
+	}
+	return KVWriteMode_KV_WRITE_MODE_UNSPECIFIED
+}
+
+func (x *KVStoreOptions) GetPersistFailurePolicy() KVPersistFailurePolicy {
+	if x != nil {
+		return x.PersistFailurePolicy
+	}
+	return KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_UNSPECIFIED
+}
+
+func (x *KVStoreOptions) GetCompression() bool {
+	if x != nil {
+		return x.Compression
+	}
+	return false
+}
+
 // Object Store options for RPC methods
 // When set, the handler stores/retrieves large binary objects
 // from a NATS JetStream Object Store bucket.
@@ -331,7 +538,10 @@ type ObjectStoreOptions struct {
 	Description string `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
 	// If true, skip server-side auto-persist — only generate client read/write
 	// methods
-	ClientOnly    bool `protobuf:"varint,5,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	ClientOnly bool `protobuf:"varint,5,opt,name=client_only,json=clientOnly,proto3" json:"client_only,omitempty"`
+	// Enable native JetStream compression for this Object Store bucket.
+	// This maps to the client library's bucket compression flag.
+	Compression   bool `protobuf:"varint,6,opt,name=compression,proto3" json:"compression,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -401,6 +611,13 @@ func (x *ObjectStoreOptions) GetClientOnly() bool {
 	return false
 }
 
+func (x *ObjectStoreOptions) GetCompression() bool {
+	if x != nil {
+		return x.Compression
+	}
+	return false
+}
+
 // Streaming options for fine-tuning streaming RPC behavior
 type StreamOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -461,7 +678,9 @@ type ChunkedIOOptions struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of the bytes field carrying each payload chunk.
 	ChunkField string `protobuf:"bytes,1,opt,name=chunk_field,json=chunkField,proto3" json:"chunk_field,omitempty"`
-	// Default chunk size for generated helpers when the caller passes 0.
+	// Default chunk size in bytes for generated helpers.
+	// When the caller passes 0 to SendReader/SendFile, this value is used.
+	// If set to 0 in the proto option itself, defaults to 65536 (64 KB).
 	DefaultChunkSize int32 `protobuf:"varint,2,opt,name=default_chunk_size,json=defaultChunkSize,proto3" json:"default_chunk_size,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
@@ -586,7 +805,7 @@ var File_natsmicro_options_proto protoreflect.FileDescriptor
 
 const file_natsmicro_options_proto_rawDesc = "" +
 	"\n" +
-	"\x17natsmicro/options.proto\x12\tnatsmicro\x1a google/protobuf/descriptor.proto\x1a\x1egoogle/protobuf/duration.proto\"\x87\x03\n" +
+	"\x17natsmicro/options.proto\x12\tnatsmicro\x1a google/protobuf/descriptor.proto\x1a\x1egoogle/protobuf/duration.proto\"\xb9\x03\n" +
 	"\x0eServiceOptions\x12%\n" +
 	"\x0esubject_prefix\x18\x01 \x01(\tR\rsubjectPrefix\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
@@ -597,17 +816,22 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	"\x04skip\x18\a \x01(\bR\x04skip\x12\x12\n" +
 	"\x04json\x18\b \x01(\bR\x04json\x12\x1f\n" +
 	"\verror_codes\x18\t \x03(\tR\n" +
-	"errorCodes\x1a;\n" +
+	"errorCodes\x120\n" +
+	"\x14queue_group_disabled\x18\n" +
+	" \x01(\bR\x12queueGroupDisabled\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdd\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xeb\x02\n" +
 	"\x0fEndpointOptions\x123\n" +
 	"\atimeout\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12\x12\n" +
 	"\x04skip\x18\x02 \x01(\bR\x04skip\x12D\n" +
-	"\bmetadata\x18\x03 \x03(\v2(.natsmicro.EndpointOptions.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\x03 \x03(\v2(.natsmicro.EndpointOptions.MetadataEntryR\bmetadata\x120\n" +
+	"\x14queue_group_disabled\x18\x04 \x01(\bR\x12queueGroupDisabled\x12*\n" +
+	"\x11pending_msg_limit\x18\x05 \x01(\x05R\x0fpendingMsgLimit\x12.\n" +
+	"\x13pending_bytes_limit\x18\x06 \x01(\x05R\x11pendingBytesLimit\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdc\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc1\x05\n" +
 	"\x0eKVStoreOptions\x12\x16\n" +
 	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12!\n" +
 	"\fkey_template\x18\x02 \x01(\tR\vkeyTemplate\x12+\n" +
@@ -616,28 +840,50 @@ const file_natsmicro_options_proto_rawDesc = "" +
 	"\vmax_history\x18\x05 \x01(\x05R\n" +
 	"maxHistory\x12\x1f\n" +
 	"\vclient_only\x18\x06 \x01(\bR\n" +
-	"clientOnly\"\xbf\x01\n" +
+	"clientOnly\x12C\n" +
+	"\bmetadata\x18\a \x03(\v2'.natsmicro.KVStoreOptions.MetadataEntryR\bmetadata\x12C\n" +
+	"\x10limit_marker_ttl\x18\b \x01(\v2\x19.google.protobuf.DurationR\x0elimitMarkerTtl\x122\n" +
+	"\akey_ttl\x18\t \x01(\v2\x19.google.protobuf.DurationR\x06keyTtl\x126\n" +
+	"\tpurge_ttl\x18\n" +
+	" \x01(\v2\x19.google.protobuf.DurationR\bpurgeTtl\x125\n" +
+	"\n" +
+	"write_mode\x18\v \x01(\x0e2\x16.natsmicro.KVWriteModeR\twriteMode\x12W\n" +
+	"\x16persist_failure_policy\x18\f \x01(\x0e2!.natsmicro.KVPersistFailurePolicyR\x14persistFailurePolicy\x12 \n" +
+	"\vcompression\x18\r \x01(\bR\vcompression\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe1\x01\n" +
 	"\x12ObjectStoreOptions\x12\x16\n" +
 	"\x06bucket\x18\x01 \x01(\tR\x06bucket\x12!\n" +
 	"\fkey_template\x18\x02 \x01(\tR\vkeyTemplate\x12+\n" +
 	"\x03ttl\x18\x03 \x01(\v2\x19.google.protobuf.DurationR\x03ttl\x12 \n" +
 	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1f\n" +
 	"\vclient_only\x18\x05 \x01(\bR\n" +
-	"clientOnly\"L\n" +
+	"clientOnly\x12 \n" +
+	"\vcompression\x18\x06 \x01(\bR\vcompression\"L\n" +
 	"\rStreamOptions\x12!\n" +
 	"\fmax_inflight\x18\x01 \x01(\x05R\vmaxInflight\x12\x18\n" +
 	"\aordered\x18\x02 \x01(\bR\aordered\"a\n" +
 	"\x10ChunkedIOOptions\x12\x1f\n" +
 	"\vchunk_field\x18\x01 \x01(\tR\n" +
 	"chunkField\x12,\n" +
-	"\x12default_chunk_size\x18\x02 \x01(\x05R\x10defaultChunkSize:V\n" +
+	"\x12default_chunk_size\x18\x02 \x01(\x05R\x10defaultChunkSize*\x91\x01\n" +
+	"\vKVWriteMode\x12\x1d\n" +
+	"\x19KV_WRITE_MODE_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dKV_WRITE_MODE_LAST_WRITE_WINS\x10\x01\x12!\n" +
+	"\x1dKV_WRITE_MODE_COMPARE_AND_SET\x10\x02\x12\x1d\n" +
+	"\x19KV_WRITE_MODE_CREATE_ONLY\x10\x03*\x96\x01\n" +
+	"\x16KVPersistFailurePolicy\x12)\n" +
+	"%KV_PERSIST_FAILURE_POLICY_UNSPECIFIED\x10\x00\x12)\n" +
+	"%KV_PERSIST_FAILURE_POLICY_BEST_EFFORT\x10\x01\x12&\n" +
+	"\"KV_PERSIST_FAILURE_POLICY_REQUIRED\x10\x02:V\n" +
 	"\aservice\x12\x1f.google.protobuf.ServiceOptions\x18ц\x03 \x01(\v2\x19.natsmicro.ServiceOptionsR\aservice:X\n" +
 	"\bendpoint\x12\x1e.google.protobuf.MethodOptions\x18҆\x03 \x01(\v2\x1a.natsmicro.EndpointOptionsR\bendpoint:V\n" +
 	"\bkv_store\x12\x1e.google.protobuf.MethodOptions\x18ӆ\x03 \x01(\v2\x19.natsmicro.KVStoreOptionsR\akvStore:b\n" +
 	"\fobject_store\x12\x1e.google.protobuf.MethodOptions\x18Ԇ\x03 \x01(\v2\x1d.natsmicro.ObjectStoreOptionsR\vobjectStore:R\n" +
 	"\x06stream\x12\x1e.google.protobuf.MethodOptions\x18Ն\x03 \x01(\v2\x18.natsmicro.StreamOptionsR\x06stream:\\\n" +
 	"\n" +
-	"chunked_io\x12\x1e.google.protobuf.MethodOptions\x18ֆ\x03 \x01(\v2\x1b.natsmicro.ChunkedIOOptionsR\tchunkedIoB6Z4github.com/toyz/protoc-gen-nats-micro/gen/nats/microb\x06proto3"
+	"chunked_io\x12\x1e.google.protobuf.MethodOptions\x18ֆ\x03 \x01(\v2\x1b.natsmicro.ChunkedIOOptionsR\tchunkedIoB9Z7github.com/franchb/protoc-gen-nats-micro/gen/nats/microb\x06proto3"
 
 var (
 	file_natsmicro_options_proto_rawDescOnce sync.Once
@@ -651,44 +897,54 @@ func file_natsmicro_options_proto_rawDescGZIP() []byte {
 	return file_natsmicro_options_proto_rawDescData
 }
 
-var file_natsmicro_options_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_natsmicro_options_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_natsmicro_options_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_natsmicro_options_proto_goTypes = []any{
-	(*ServiceOptions)(nil),              // 0: natsmicro.ServiceOptions
-	(*EndpointOptions)(nil),             // 1: natsmicro.EndpointOptions
-	(*KVStoreOptions)(nil),              // 2: natsmicro.KVStoreOptions
-	(*ObjectStoreOptions)(nil),          // 3: natsmicro.ObjectStoreOptions
-	(*StreamOptions)(nil),               // 4: natsmicro.StreamOptions
-	(*ChunkedIOOptions)(nil),            // 5: natsmicro.ChunkedIOOptions
-	nil,                                 // 6: natsmicro.ServiceOptions.MetadataEntry
-	nil,                                 // 7: natsmicro.EndpointOptions.MetadataEntry
-	(*durationpb.Duration)(nil),         // 8: google.protobuf.Duration
-	(*descriptorpb.ServiceOptions)(nil), // 9: google.protobuf.ServiceOptions
-	(*descriptorpb.MethodOptions)(nil),  // 10: google.protobuf.MethodOptions
+	(KVWriteMode)(0),                    // 0: natsmicro.KVWriteMode
+	(KVPersistFailurePolicy)(0),         // 1: natsmicro.KVPersistFailurePolicy
+	(*ServiceOptions)(nil),              // 2: natsmicro.ServiceOptions
+	(*EndpointOptions)(nil),             // 3: natsmicro.EndpointOptions
+	(*KVStoreOptions)(nil),              // 4: natsmicro.KVStoreOptions
+	(*ObjectStoreOptions)(nil),          // 5: natsmicro.ObjectStoreOptions
+	(*StreamOptions)(nil),               // 6: natsmicro.StreamOptions
+	(*ChunkedIOOptions)(nil),            // 7: natsmicro.ChunkedIOOptions
+	nil,                                 // 8: natsmicro.ServiceOptions.MetadataEntry
+	nil,                                 // 9: natsmicro.EndpointOptions.MetadataEntry
+	nil,                                 // 10: natsmicro.KVStoreOptions.MetadataEntry
+	(*durationpb.Duration)(nil),         // 11: google.protobuf.Duration
+	(*descriptorpb.ServiceOptions)(nil), // 12: google.protobuf.ServiceOptions
+	(*descriptorpb.MethodOptions)(nil),  // 13: google.protobuf.MethodOptions
 }
 var file_natsmicro_options_proto_depIdxs = []int32{
-	6,  // 0: natsmicro.ServiceOptions.metadata:type_name -> natsmicro.ServiceOptions.MetadataEntry
-	8,  // 1: natsmicro.ServiceOptions.timeout:type_name -> google.protobuf.Duration
-	8,  // 2: natsmicro.EndpointOptions.timeout:type_name -> google.protobuf.Duration
-	7,  // 3: natsmicro.EndpointOptions.metadata:type_name -> natsmicro.EndpointOptions.MetadataEntry
-	8,  // 4: natsmicro.KVStoreOptions.ttl:type_name -> google.protobuf.Duration
-	8,  // 5: natsmicro.ObjectStoreOptions.ttl:type_name -> google.protobuf.Duration
-	9,  // 6: natsmicro.service:extendee -> google.protobuf.ServiceOptions
-	10, // 7: natsmicro.endpoint:extendee -> google.protobuf.MethodOptions
-	10, // 8: natsmicro.kv_store:extendee -> google.protobuf.MethodOptions
-	10, // 9: natsmicro.object_store:extendee -> google.protobuf.MethodOptions
-	10, // 10: natsmicro.stream:extendee -> google.protobuf.MethodOptions
-	10, // 11: natsmicro.chunked_io:extendee -> google.protobuf.MethodOptions
-	0,  // 12: natsmicro.service:type_name -> natsmicro.ServiceOptions
-	1,  // 13: natsmicro.endpoint:type_name -> natsmicro.EndpointOptions
-	2,  // 14: natsmicro.kv_store:type_name -> natsmicro.KVStoreOptions
-	3,  // 15: natsmicro.object_store:type_name -> natsmicro.ObjectStoreOptions
-	4,  // 16: natsmicro.stream:type_name -> natsmicro.StreamOptions
-	5,  // 17: natsmicro.chunked_io:type_name -> natsmicro.ChunkedIOOptions
-	18, // [18:18] is the sub-list for method output_type
-	18, // [18:18] is the sub-list for method input_type
-	12, // [12:18] is the sub-list for extension type_name
-	6,  // [6:12] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	8,  // 0: natsmicro.ServiceOptions.metadata:type_name -> natsmicro.ServiceOptions.MetadataEntry
+	11, // 1: natsmicro.ServiceOptions.timeout:type_name -> google.protobuf.Duration
+	11, // 2: natsmicro.EndpointOptions.timeout:type_name -> google.protobuf.Duration
+	9,  // 3: natsmicro.EndpointOptions.metadata:type_name -> natsmicro.EndpointOptions.MetadataEntry
+	11, // 4: natsmicro.KVStoreOptions.ttl:type_name -> google.protobuf.Duration
+	10, // 5: natsmicro.KVStoreOptions.metadata:type_name -> natsmicro.KVStoreOptions.MetadataEntry
+	11, // 6: natsmicro.KVStoreOptions.limit_marker_ttl:type_name -> google.protobuf.Duration
+	11, // 7: natsmicro.KVStoreOptions.key_ttl:type_name -> google.protobuf.Duration
+	11, // 8: natsmicro.KVStoreOptions.purge_ttl:type_name -> google.protobuf.Duration
+	0,  // 9: natsmicro.KVStoreOptions.write_mode:type_name -> natsmicro.KVWriteMode
+	1,  // 10: natsmicro.KVStoreOptions.persist_failure_policy:type_name -> natsmicro.KVPersistFailurePolicy
+	11, // 11: natsmicro.ObjectStoreOptions.ttl:type_name -> google.protobuf.Duration
+	12, // 12: natsmicro.service:extendee -> google.protobuf.ServiceOptions
+	13, // 13: natsmicro.endpoint:extendee -> google.protobuf.MethodOptions
+	13, // 14: natsmicro.kv_store:extendee -> google.protobuf.MethodOptions
+	13, // 15: natsmicro.object_store:extendee -> google.protobuf.MethodOptions
+	13, // 16: natsmicro.stream:extendee -> google.protobuf.MethodOptions
+	13, // 17: natsmicro.chunked_io:extendee -> google.protobuf.MethodOptions
+	2,  // 18: natsmicro.service:type_name -> natsmicro.ServiceOptions
+	3,  // 19: natsmicro.endpoint:type_name -> natsmicro.EndpointOptions
+	4,  // 20: natsmicro.kv_store:type_name -> natsmicro.KVStoreOptions
+	5,  // 21: natsmicro.object_store:type_name -> natsmicro.ObjectStoreOptions
+	6,  // 22: natsmicro.stream:type_name -> natsmicro.StreamOptions
+	7,  // 23: natsmicro.chunked_io:type_name -> natsmicro.ChunkedIOOptions
+	24, // [24:24] is the sub-list for method output_type
+	24, // [24:24] is the sub-list for method input_type
+	18, // [18:24] is the sub-list for extension type_name
+	12, // [12:18] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_natsmicro_options_proto_init() }
@@ -701,13 +957,14 @@ func file_natsmicro_options_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_natsmicro_options_proto_rawDesc), len(file_natsmicro_options_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   8,
+			NumEnums:      2,
+			NumMessages:   9,
 			NumExtensions: 6,
 			NumServices:   0,
 		},
 		GoTypes:           file_natsmicro_options_proto_goTypes,
 		DependencyIndexes: file_natsmicro_options_proto_depIdxs,
+		EnumInfos:         file_natsmicro_options_proto_enumTypes,
 		MessageInfos:      file_natsmicro_options_proto_msgTypes,
 		ExtensionInfos:    file_natsmicro_options_proto_extTypes,
 	}.Build()

@@ -42,9 +42,17 @@ type Language interface {
 
 // TemplateData holds data passed to templates
 type TemplateData struct {
-	File    *protogen.File
-	Service *protogen.Service
-	Options ServiceOptions
+	File          *protogen.File
+	Service       *protogen.Service
+	Options       ServiceOptions
+	GeneratedFile *protogen.GeneratedFile
+}
+
+func (d TemplateData) QualifiedGoIdent(ident protogen.GoIdent) string {
+	if d.GeneratedFile == nil {
+		return ident.GoName
+	}
+	return d.GeneratedFile.QualifiedGoIdent(ident)
 }
 
 // BaseLanguage provides a reusable implementation of Language backed by Go templates.
@@ -80,15 +88,15 @@ func (b *BaseLanguage) PostGenerate(gen *protogen.Plugin, file *protogen.File, p
 }
 
 func (b *BaseLanguage) GenerateHeader(g *protogen.GeneratedFile, file *protogen.File) error {
-	return b.executeTemplates(g, TemplateData{File: file}, b.headerTemplates)
+	return b.executeTemplates(g, TemplateData{File: file, GeneratedFile: g}, b.headerTemplates)
 }
 
 func (b *BaseLanguage) GenerateShared(g *protogen.GeneratedFile, file *protogen.File) error {
-	return b.executeTemplates(g, TemplateData{File: file}, b.sharedTemplates)
+	return b.executeTemplates(g, TemplateData{File: file, GeneratedFile: g}, b.sharedTemplates)
 }
 
 func (b *BaseLanguage) Generate(g *protogen.GeneratedFile, file *protogen.File, service *protogen.Service, opts ServiceOptions) error {
-	return b.executeTemplates(g, TemplateData{File: file, Service: service, Options: opts}, b.serviceTemplates)
+	return b.executeTemplates(g, TemplateData{File: file, Service: service, Options: opts, GeneratedFile: g}, b.serviceTemplates)
 }
 
 // executeTemplates runs each named template in order, writing output to g.
@@ -122,9 +130,13 @@ func FuncMap() template.FuncMap {
 		"IsBidiStreaming":   IsBidiStreaming,
 		"IsUnary":           IsUnary,
 		// KV/ObjectStore key template resolution
-		"ResolveKeyTemplateGo": ResolveKeyTemplateGo,
-		"ResolveKeyTemplateTS": ResolveKeyTemplateTS,
-		"ResolveKeyTemplatePy": ResolveKeyTemplatePy,
+		"ResolveKeyTemplateGo":       ResolveKeyTemplateGo,
+		"ResolveKeyTemplateTS":       ResolveKeyTemplateTS,
+		"ResolveKeyTemplatePy":       ResolveKeyTemplatePy,
+		"IsKVWriteModeLastWriteWins": IsKVWriteModeLastWriteWins,
+		"IsKVWriteModeCompareAndSet": IsKVWriteModeCompareAndSet,
+		"IsKVWriteModeCreateOnly":    IsKVWriteModeCreateOnly,
+		"IsKVPersistFailureRequired": IsKVPersistFailureRequired,
 		// Method field accessors
 		"GetInputFields": GetInputFields,
 	}

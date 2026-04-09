@@ -94,5 +94,5 @@ const client = new ProductServiceNatsClient(nc, {
 ```
 
 ::: info
-See [TYPESCRIPT.md](https://github.com/Toyz/protoc-gen-nats-micro/blob/main/TYPESCRIPT.md) in the repo for the full TypeScript reference.
+See [TYPESCRIPT.md](https://github.com/franchb/protoc-gen-nats-micro/blob/main/TYPESCRIPT.md) in the repo for the full TypeScript reference.
 :::

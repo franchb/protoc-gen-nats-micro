@@ -66,6 +66,9 @@ Per-method auto-persistence to NATS KV Store using `option (natsmicro.kv_store)`
 | `description`  | `string`   | —            | Bucket description                       |
 | `max_history`  | `int32`    | —            | Max revisions per key                    |
 | `ttl`          | `Duration` | —            | Time-to-live for entries                 |
+| `write_mode`   | `enum`     | compatibility | Existing-key write behavior              |
+| `persist_failure_policy` | `enum` | best-effort | Server auto-persist failure behavior     |
+| `compression`  | `bool`     | false        | Enable native JetStream bucket compression |
 
 ```protobuf
 rpc SaveProfile(SaveReq) returns (ProfileResp) {
@@ -74,9 +77,20 @@ rpc SaveProfile(SaveReq) returns (ProfileResp) {
     key_template: "user.{id}"
     max_history: 5
     ttl: {seconds: 3600}
+    write_mode: KV_WRITE_MODE_COMPARE_AND_SET
+    persist_failure_policy: KV_PERSIST_FAILURE_POLICY_REQUIRED
+    compression: true
   };
 }
 ```
+
+Notes:
+
+- `KV_WRITE_MODE_LAST_WRITE_WINS` uses `kv.Put(...)` for existing keys
+- `KV_WRITE_MODE_COMPARE_AND_SET` uses revision-matching updates on existing keys
+- `KV_WRITE_MODE_CREATE_ONLY` fails when the key already exists
+- `key_ttl` without `write_mode` uses legacy compatibility behavior
+- `compression: true` affects bucket create/update only and is currently wired in generated Go services
 
 ## Object Store Options
 
@@ -87,12 +101,14 @@ Per-method auto-persistence to NATS Object Store using `option (natsmicro.object
 | `bucket`         | `string` | **Required** | Object store bucket name                 |
 | `key_template`   | `string` | **Required** | Key template with `{field}` placeholders |
 | `description`    | `string` | —            | Bucket description                       |
+| `compression`    | `bool`   | false        | Enable native JetStream bucket compression |
 
 ```protobuf
 rpc GenerateReport(ReportReq) returns (ReportResp) {
   option (natsmicro.object_store) = {
     bucket: "reports"
     key_template: "report.{id}"
+    compression: true
   };
 }
 ```
@@ -112,6 +128,7 @@ Constraints:
 - Upload helpers (client-streaming) are currently Go-only.
 - Valid only on server-streaming and client-streaming methods.
 - The streamed message must contain exactly one `bytes` field matching `chunk_field`.
+- `default_chunk_size` must be `>= 0`.
 - Metadata belongs in the unary request or final unary response, not in chunk messages.
 
 ```protobuf
@@ -165,7 +182,7 @@ Static segments are kept as-is. `{field}` placeholders are replaced with the cor
 
 | Option                            | Description                  |
 | --------------------------------- | ---------------------------- |
-| `WithClientSubjectPrefix(prefix)` | Override subject prefix      |
+| `WithNatsClientSubjectPrefix(prefix)` | Override subject prefix      |
 | `WithClientInterceptor(fn)`       | Add client-side interceptor  |
 | `WithClientJetStream(js)`         | Enable KV/Object Store reads |
 
@@ -180,17 +197,10 @@ From highest to lowest priority:
 
 ## Proto Import
 
-Add the dependency to your `buf.yaml`:
-
-```yaml
-deps:
-  - buf.build/toyz/natsmicro
-```
-
-Then import in your `.proto` files:
+Vendor the options proto into your repo, for example at `protos/natsmicro/options.proto`, and keep this import:
 
 ```protobuf
 import "natsmicro/options.proto";
 ```
 
-All options are defined in [extensions/proto/natsmicro/options.proto](https://github.com/Toyz/protoc-gen-nats-micro/blob/main/extensions/proto/natsmicro/options.proto).
+All options are defined in [extensions/proto/natsmicro/options.proto](https://github.com/franchb/protoc-gen-nats-micro/blob/main/extensions/proto/natsmicro/options.proto).

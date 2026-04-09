@@ -20,6 +20,7 @@ export interface I{{.Service.GoName}}NatsClient {
 {{- if $endpointOpts.KVStore}}
   get{{.GoName}}FromKV(key: string): Promise<pb.{{.Output.GoIdent.GoName}}>;
   put{{.GoName}}ToKV(key: string, val: pb.{{.Output.GoIdent.GoName}}): Promise<void>;
+  purge{{.GoName}}FromKV(key: string): Promise<void>;
 {{- end}}
 {{- if $endpointOpts.ObjectStore}}
   get{{.GoName}}FromObjectStore(key: string): Promise<pb.{{.Output.GoIdent.GoName}}>;
@@ -27,21 +28,12 @@ export interface I{{.Service.GoName}}NatsClient {
 {{- end}}
 {{- else if IsServerStreaming .}}
 {{- if not (IsClientStreaming .)}}
-{{- if $endpointOpts.ChunkedIO}}
-  {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<{{$.Service.GoName}}_{{.GoName}}_ChunkedReceiver>;
-{{- else}}
   {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>>;
-{{- end}}
-{{- end}}
-{{- if IsClientStreaming .}}
-{{- if not (IsServerStreaming .)}}
-{{- if $endpointOpts.ChunkedIO}}
-  {{ToLowerFirst .GoName}}(): Promise<{{$.Service.GoName}}_{{.GoName}}_ChunkedClientStreamSender>;
 {{- else}}
-  {{ToLowerFirst .GoName}}(): Promise<ClientStreamSender<pb.{{.Input.GoIdent.GoName}}, pb.{{.Output.GoIdent.GoName}}>>;
+  {{ToLowerFirst .GoName}}(): Promise<{{$.Service.GoName}}_{{.GoName}}_BidiClientStream>;
 {{- end}}
-{{- end}}
-{{- end}}
+{{- else if IsClientStreaming .}}
+  {{ToLowerFirst .GoName}}(): Promise<{{$.Service.GoName}}_{{.GoName}}_ClientStream>;
 {{- end}}
 {{- end}}
 {{- end}}
@@ -185,7 +177,35 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
     }
     const kv = await this.js.views.kv('{{$endpointOpts.KVStore.Bucket}}');
     const data = pb.{{.Output.GoIdent.GoName}}.toBinary(val);
+    {{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}
+    // Compare-and-set: create or update with revision check
+    try {
+      await kv.create(key, data);
+    } catch {
+      const entry = await kv.get(key);
+      if (entry) {
+        await kv.update(key, data, entry.revision);
+      } else {
+        await kv.create(key, data);
+      }
+    }
+    {{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}
+    // Create-only: fail if key already exists
+    await kv.create(key, data);
+    {{- else}}
     await kv.put(key, data);
+    {{- end}}
+  }
+
+  /**
+   * Purge a key and all its revisions from the KV Store.
+   */
+  async purge{{.GoName}}FromKV(key: string): Promise<void> {
+    if (!this.js) {
+      throw new Error('JetStream not configured; pass jetstream option to enable KV operations');
+    }
+    const kv = await this.js.views.kv('{{$endpointOpts.KVStore.Bucket}}');
+    await kv.purge(key);
   }
 {{- end}}
 
@@ -232,11 +252,7 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
    * {{.GoName}} initiates a server-streaming RPC call.
    * Returns a receiver that yields response messages from the server.
    */
-{{- if $endpointOpts.ChunkedIO}}
-  async {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<{{$.Service.GoName}}_{{.GoName}}_ChunkedReceiver> {
-{{- else}}
   async {{ToLowerFirst .GoName}}(request: pb.{{.Input.GoIdent.GoName}}): Promise<ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>> {
-{{- end}}
     const subject = `${this.subjectPrefix}.{{ToSnakeCase .GoName}}`;
     const data = pb.{{.Input.GoIdent.GoName}}.toBinary(request);
 
@@ -252,15 +268,51 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
     h.set('Reply-To', inbox);
     this.nc.publish(subject, data, { headers: h });
 
-{{- if $endpointOpts.ChunkedIO}}
-    return new {{$.Service.GoName}}_{{.GoName}}_ChunkedReceiver(sub, (msgData: Uint8Array) => {
-      return pb.{{.Output.GoIdent.GoName}}.fromBinary(msgData);
-    });
-{{- else}}
     return new ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>(sub, (msgData: Uint8Array) => {
       return pb.{{.Output.GoIdent.GoName}}.fromBinary(msgData);
     });
+  }
 {{- end}}
+{{- end}}
+
+{{- if IsClientStreaming .}}
+{{- if IsServerStreaming .}}{{/* bidi streaming */}}
+  /**
+   * {{.GoName}} initiates a bidirectional streaming RPC call.
+   */
+  async {{ToLowerFirst .GoName}}(): Promise<{{$.Service.GoName}}_{{.GoName}}_BidiClientStream> {
+    const subject = `${this.subjectPrefix}.{{ToSnakeCase .GoName}}`;
+
+    // Create client inbox for receiving server messages
+    const clientInbox = this.nc.options.inboxPrefix
+      ? `${this.nc.options.inboxPrefix}.${Date.now()}.${Math.random().toString(36).slice(2)}`
+      : `_INBOX.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+
+    const recvQueue: any[] = [];
+    let recvResolve: ((value: any) => void) | null = null;
+    const sub = this.nc.subscribe(clientInbox, {
+      callback: (_err: any, m: any) => {
+        if (recvResolve) { const r = recvResolve; recvResolve = null; r(m); }
+        else { recvQueue.push(m); }
+      },
+    });
+
+    // Send handshake
+    const h = headers();
+    h.set('Reply-To', clientInbox);
+    const ack = await this.nc.request(subject, new Uint8Array(0), { headers: h, timeout: this.timeout });
+
+    const serverInbox = ack.headers?.get('Nats-Stream-Inbox');
+    if (!serverInbox) {
+      sub.unsubscribe();
+      throw new Error('Server did not provide stream inbox');
+    }
+
+    return new {{$.Service.GoName}}_{{.GoName}}_BidiClientStream(
+      this.nc, serverInbox, sub, recvQueue, recvResolve,
+      (data: Uint8Array) => pb.{{.Output.GoIdent.GoName}}.fromBinary(data),
+      (val: pb.{{.Input.GoIdent.GoName}}) => pb.{{.Input.GoIdent.GoName}}.toBinary(val),
+    );
   }
 {{- end}}
 {{- end}}
@@ -269,46 +321,40 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
 {{- if not (IsServerStreaming .)}}
   /**
    * {{.GoName}} initiates a client-streaming RPC call.
-   * Returns a sender for streaming messages to the server and receiving the final response.
    */
-{{- if $endpointOpts.ChunkedIO}}
-  async {{ToLowerFirst .GoName}}(): Promise<{{$.Service.GoName}}_{{.GoName}}_ChunkedClientStreamSender> {
-{{- else}}
-  async {{ToLowerFirst .GoName}}(): Promise<ClientStreamSender<pb.{{.Input.GoIdent.GoName}}, pb.{{.Output.GoIdent.GoName}}>> {
-{{- end}}
+  async {{ToLowerFirst .GoName}}(): Promise<{{$.Service.GoName}}_{{.GoName}}_ClientStream> {
     const subject = `${this.subjectPrefix}.{{ToSnakeCase .GoName}}`;
 
-    // Create reply inbox for receiving the final response
-    const replyInbox = this.nc.options.inboxPrefix
+    // Create client inbox for receiving response
+    const clientInbox = this.nc.options.inboxPrefix
       ? `${this.nc.options.inboxPrefix}.${Date.now()}.${Math.random().toString(36).slice(2)}`
       : `_INBOX.${Date.now()}.${Math.random().toString(36).slice(2)}`;
 
-    // Initiate handshake: request-reply to get server's stream inbox
-    const h = headers();
-    h.set('Reply-To', replyInbox);
-    const ack = await this.nc.request(subject, new Uint8Array(0), {
-      headers: h,
-      timeout: this.timeout,
+    const recvQueue: any[] = [];
+    let recvResolve: ((value: any) => void) | null = null;
+    const sub = this.nc.subscribe(clientInbox, {
+      callback: (_err: any, m: any) => {
+        if (recvResolve) { const r = recvResolve; recvResolve = null; r(m); }
+        else { recvQueue.push(m); }
+      },
     });
+
+    // Send handshake
+    const h = headers();
+    h.set('Reply-To', clientInbox);
+    const ack = await this.nc.request(subject, new Uint8Array(0), { headers: h, timeout: this.timeout });
 
     const serverInbox = ack.headers?.get('Nats-Stream-Inbox');
     if (!serverInbox) {
-      throw new Error('Client-streaming handshake failed: no Nats-Stream-Inbox in ack');
+      sub.unsubscribe();
+      throw new Error('Server did not provide stream inbox');
     }
 
-{{- if $endpointOpts.ChunkedIO}}
-    return new {{$.Service.GoName}}_{{.GoName}}_ChunkedClientStreamSender(
-      this.nc, serverInbox, replyInbox,
-      (msg: pb.{{.Input.GoIdent.GoName}}) => pb.{{.Input.GoIdent.GoName}}.toBinary(msg),
+    return new {{$.Service.GoName}}_{{.GoName}}_ClientStream(
+      this.nc, serverInbox, sub, recvQueue, recvResolve,
       (data: Uint8Array) => pb.{{.Output.GoIdent.GoName}}.fromBinary(data),
+      (val: pb.{{.Input.GoIdent.GoName}}) => pb.{{.Input.GoIdent.GoName}}.toBinary(val),
     );
-{{- else}}
-    return new ClientStreamSender<pb.{{.Input.GoIdent.GoName}}, pb.{{.Output.GoIdent.GoName}}>(
-      this.nc, serverInbox, replyInbox,
-      (msg: pb.{{.Input.GoIdent.GoName}}) => pb.{{.Input.GoIdent.GoName}}.toBinary(msg),
-      (data: Uint8Array) => pb.{{.Output.GoIdent.GoName}}.fromBinary(data),
-    );
-{{- end}}
   }
 {{- end}}
 {{- end}}
@@ -343,21 +389,99 @@ export class ClientStreamReceiver<T> {
   ) {}
 
   /**
-   * Async iterator for receiving streamed messages
+   * Receive the next message. Returns null on end-of-stream.
    */
-  async *[Symbol.asyncIterator](): AsyncIterableIterator<T> {
+  async recv(): Promise<T | null> {
+    if (this.done) return null;
     for await (const msg of this.sub) {
       if (msg.headers?.get('Nats-Stream-End') === 'true') {
-        // Check for error
         const errorCode = msg.headers?.get('Nats-Service-Error-Code') || msg.headers?.get('Status');
         if (errorCode) {
           const desc = msg.headers?.get('Nats-Service-Error') || msg.headers?.get('Description') || 'Stream error';
           throw new Error(`Stream error [${errorCode}]: ${desc}`);
         }
         this.done = true;
-        break;
+        return null;
       }
-      yield this.decoder(msg.data);
+      return this.decoder(msg.data);
+    }
+    return null;
+  }
+
+  /**
+   * Async iterator for receiving streamed messages
+   */
+  async *[Symbol.asyncIterator](): AsyncIterableIterator<T> {
+    while (true) {
+      const val = await this.recv();
+      if (val === null) break;
+      yield val;
+    }
+  }
+
+  /**
+   * Drain all stream chunks into a single Uint8Array.
+   * WARNING: entire payload is buffered in memory.
+   */
+  async recvBytes(field: string = 'data'): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    for await (const msg of this) {
+      const chunk = (msg as any)[field];
+      if (chunk) chunks.push(chunk);
+    }
+    const total = chunks.reduce((s, c) => s + c.length, 0);
+    const result = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      result.set(c, offset);
+      offset += c.length;
+    }
+    return result;
+  }
+
+  /**
+   * Stream chunks to a Node.js WritableStream.
+   */
+  async recvToWriter(writable: any, field: string = 'data'): Promise<void> {
+    for await (const msg of this) {
+      const chunk = (msg as any)[field];
+      if (chunk) {
+        if (typeof writable.write === 'function') {
+          await new Promise<void>((resolve, reject) => {
+            if (!writable.write(chunk)) {
+              writable.once('drain', resolve);
+            } else {
+              resolve();
+            }
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Download stream to file atomically (temp file + rename).
+   * Requires Node.js fs module.
+   */
+  async recvToFile(path: string, field: string = 'data'): Promise<void> {
+    const fs = await import('fs');
+    const os = await import('os');
+    const nodePath = await import('path');
+    const dir = nodePath.dirname(nodePath.resolve(path));
+    const tmpPath = nodePath.join(dir, `.tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    const fd = fs.openSync(tmpPath, 'w');
+    try {
+      for await (const msg of this) {
+        const chunk = (msg as any)[field];
+        if (chunk) fs.writeSync(fd, chunk);
+      }
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      fs.renameSync(tmpPath, path);
+    } catch (err) {
+      fs.closeSync(fd);
+      try { fs.unlinkSync(tmpPath); } catch {}
+      throw err;
     }
   }
 
@@ -368,118 +492,204 @@ export class ClientStreamReceiver<T> {
     this.sub.unsubscribe();
   }
 }
-{{range .Service.Methods -}}
-{{- $endpointOpts := GetEndpointOptions . -}}
-{{- if not $endpointOpts.Skip -}}
-{{- if IsServerStreaming . -}}
-{{- if not (IsClientStreaming .) -}}
-{{- if $endpointOpts.ChunkedIO}}
+
+{{- range .Service.Methods}}
+{{- $endpointOpts := GetEndpointOptions .}}
+{{- if not $endpointOpts.Skip}}
+{{- if IsClientStreaming .}}
+{{- if not (IsServerStreaming .)}}
 
 /**
- * Chunked stream receiver for {{.GoName}} with download convenience helpers.
+ * Client-streaming: send multiple {{.Input.GoIdent.GoName}} messages, receive a single {{.Output.GoIdent.GoName}}
  */
-export class {{$.Service.GoName}}_{{.GoName}}_ChunkedReceiver extends ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}> {
-  /**
-   * recvBytes drains the entire stream into a single Uint8Array.
-   * WARNING: the entire payload is accumulated in memory. For large or
-   * unbounded streams, iterate the receiver directly instead.
-   */
-  async recvBytes(): Promise<Uint8Array> {
-    const chunks: Uint8Array[] = [];
-    let totalLength = 0;
-    for await (const msg of this) {
-      const chunk = msg.{{ToCamelCase $endpointOpts.ChunkedIO.ChunkField}};
-      chunks.push(chunk);
-      totalLength += chunk.length;
-    }
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      result.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return result;
-  }
-}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- end}}
-
-/**
- * ClientStreamSender sends streamed messages to the server and receives a final response
- */
-export class ClientStreamSender<TInput, TOutput> {
+export class {{$.Service.GoName}}_{{.GoName}}_ClientStream {
   private seq = 0;
+  private recvResolve: ((value: any) => void) | null;
 
   constructor(
     private readonly nc: NatsConnection,
     private readonly serverInbox: string,
-    private readonly replyInbox: string,
-    private readonly encoder: (msg: TInput) => Uint8Array,
-    private readonly decoder: (data: Uint8Array) => TOutput,
-  ) {}
+    private readonly sub: any,
+    private readonly recvQueue: any[],
+    recvResolve: ((value: any) => void) | null,
+    private readonly decoder: (data: Uint8Array) => pb.{{.Output.GoIdent.GoName}},
+    private readonly encoder: (val: pb.{{.Input.GoIdent.GoName}}) => Uint8Array,
+  ) {
+    this.recvResolve = recvResolve;
+  }
 
-  /**
-   * Send a message to the server stream
-   */
-  async send(msg: TInput): Promise<void> {
+  /** Send a message to the server */
+  async send(val: pb.{{.Input.GoIdent.GoName}}): Promise<void> {
     this.seq++;
-    const data = this.encoder(msg);
+    const data = this.encoder(val);
     const h = headers();
     h.set('Nats-Stream-Seq', String(this.seq));
     this.nc.publish(this.serverInbox, data, { headers: h });
   }
 
-  /**
-   * Close the stream and wait for the server's final response.
-   * Subscribes to the reply inbox first to avoid race conditions.
-   */
-  async closeAndRecv(): Promise<TOutput> {
-    // Subscribe to reply inbox BEFORE sending end marker to avoid race
-    const sub = this.nc.subscribe(this.replyInbox, { max: 1 });
+  {{- if $endpointOpts.ChunkedIO}}
 
-    // Send end-of-stream marker
+  /** Send a single chunk of bytes */
+  async sendBytes(data: Uint8Array): Promise<void> {
+    const msg = new pb.{{.Input.GoIdent.GoName}}();
+    (msg as any).{{ToLowerFirst (ToCamelCase $endpointOpts.ChunkedIO.ChunkField)}} = data;
+    await this.send(msg);
+  }
+
+  /** Stream from a ReadableStream in chunks */
+  async sendReader(readable: ReadableStream<Uint8Array>, chunkSize: number = {{$endpointOpts.ChunkedIO.DefaultChunkSize}}): Promise<void> {
+    const reader = readable.getReader();
+    let buffer = new Uint8Array(0);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (value) {
+          const combined = new Uint8Array(buffer.length + value.length);
+          combined.set(buffer);
+          combined.set(value, buffer.length);
+          buffer = combined;
+          while (buffer.length >= chunkSize) {
+            await this.sendBytes(buffer.slice(0, chunkSize));
+            buffer = buffer.slice(chunkSize);
+          }
+        }
+        if (done) break;
+      }
+      if (buffer.length > 0) {
+        await this.sendBytes(buffer);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  /** Stream a file in chunks (Node.js only) */
+  async sendFile(path: string, chunkSize: number = {{$endpointOpts.ChunkedIO.DefaultChunkSize}}): Promise<void> {
+    const fs = await import('fs');
+    const fd = fs.openSync(path, 'r');
+    const buf = Buffer.alloc(chunkSize);
+    try {
+      while (true) {
+        const n = fs.readSync(fd, buf);
+        if (n === 0) break;
+        await this.sendBytes(buf.slice(0, n));
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  {{- end}}
+
+  /** Signal end-of-stream and wait for the final response */
+  async closeAndRecv(timeout: number = 30000): Promise<pb.{{.Output.GoIdent.GoName}}> {
     const h = headers();
     h.set('Nats-Stream-End', 'true');
     this.nc.publish(this.serverInbox, new Uint8Array(0), { headers: h });
 
-    // Wait for the final response
-    for await (const msg of sub) {
-      // Check for error response
-      const errorCode = msg.headers?.get('Nats-Service-Error-Code') || msg.headers?.get('Status');
-      if (errorCode) {
-        const desc = msg.headers?.get('Nats-Service-Error') || msg.headers?.get('Description') || 'Stream error';
-        throw new Error(`Stream error [${errorCode}]: ${desc}`);
-      }
-      return this.decoder(msg.data);
+    const raw = this.recvQueue.length > 0
+      ? this.recvQueue.shift()
+      : await new Promise<any>((resolve) => {
+          const timer = setTimeout(() => resolve(null), timeout);
+          this.recvResolve = (v) => { clearTimeout(timer); resolve(v); };
+        });
+
+    this.sub.unsubscribe();
+
+    if (!raw) throw new Error('Timeout waiting for response');
+
+    const errorCode = raw.headers?.get('Status') || raw.headers?.get('Nats-Service-Error-Code');
+    if (errorCode) {
+      const desc = raw.headers?.get('Description') || raw.headers?.get('Nats-Service-Error') || '';
+      throw new Error(`Stream error [${errorCode}]: ${desc}`);
     }
 
-    throw new Error('Client-streaming response not received');
+    return this.decoder(raw.data);
+  }
+
+  close(): void {
+    this.sub.unsubscribe();
   }
 }
-{{range .Service.Methods -}}
-{{- $endpointOpts := GetEndpointOptions . -}}
-{{- if not $endpointOpts.Skip -}}
-{{- if IsClientStreaming . -}}
-{{- if not (IsServerStreaming .) -}}
-{{- if $endpointOpts.ChunkedIO}}
+{{- end}}
+{{- end}}
+
+{{- if IsBidiStreaming .}}
 
 /**
- * Chunked client-stream sender for {{.GoName}} with upload convenience helpers.
+ * Bidirectional streaming for {{.GoName}}
  */
-export class {{$.Service.GoName}}_{{.GoName}}_ChunkedClientStreamSender extends ClientStreamSender<pb.{{.Input.GoIdent.GoName}}, pb.{{.Output.GoIdent.GoName}}> {
-  /**
-   * sendBytes wraps raw bytes into the chunk message and sends it.
-   */
-  async sendBytes(data: Uint8Array): Promise<void> {
-    const msg = new pb.{{.Input.GoIdent.GoName}}({ {{ToCamelCase $endpointOpts.ChunkedIO.ChunkField}}: data });
-    return this.send(msg);
+export class {{$.Service.GoName}}_{{.GoName}}_BidiClientStream {
+  private seq = 0;
+  private recvDone = false;
+  private recvResolve: ((value: any) => void) | null;
+
+  constructor(
+    private readonly nc: NatsConnection,
+    private readonly serverInbox: string,
+    private readonly sub: any,
+    private readonly recvQueue: any[],
+    recvResolve: ((value: any) => void) | null,
+    private readonly decoder: (data: Uint8Array) => pb.{{.Output.GoIdent.GoName}},
+    private readonly encoder: (val: pb.{{.Input.GoIdent.GoName}}) => Uint8Array,
+  ) {
+    this.recvResolve = recvResolve;
+  }
+
+  /** Send a message to the server */
+  async send(val: pb.{{.Input.GoIdent.GoName}}): Promise<void> {
+    this.seq++;
+    const data = this.encoder(val);
+    const h = headers();
+    h.set('Nats-Stream-Seq', String(this.seq));
+    this.nc.publish(this.serverInbox, data, { headers: h });
+  }
+
+  /** Receive the next message from the server. Returns null on end-of-stream. */
+  async recv(timeout: number = 30000): Promise<pb.{{.Output.GoIdent.GoName}} | null> {
+    if (this.recvDone) return null;
+    const raw = this.recvQueue.length > 0
+      ? this.recvQueue.shift()
+      : await new Promise<any>((resolve) => {
+          const timer = setTimeout(() => resolve(null), timeout);
+          this.recvResolve = (v) => { clearTimeout(timer); resolve(v); };
+        });
+
+    if (!raw) throw new Error('Timeout waiting for message');
+
+    if (raw.headers?.get('Nats-Stream-End') === 'true') {
+      this.recvDone = true;
+      const errorCode = raw.headers?.get('Status') || raw.headers?.get('Nats-Service-Error-Code');
+      if (errorCode) {
+        const desc = raw.headers?.get('Description') || raw.headers?.get('Nats-Service-Error') || '';
+        throw new Error(`Stream error [${errorCode}]: ${desc}`);
+      }
+      return null;
+    }
+
+    return this.decoder(raw.data);
+  }
+
+  /** Signal that the client is done sending */
+  async closeSend(): Promise<void> {
+    const h = headers();
+    h.set('Nats-Stream-End', 'true');
+    this.nc.publish(this.serverInbox, new Uint8Array(0), { headers: h });
+  }
+
+  /** Close the stream entirely */
+  close(): void {
+    this.sub.unsubscribe();
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterableIterator<pb.{{.Output.GoIdent.GoName}}> {
+    while (true) {
+      const val = await this.recv();
+      if (val === null) break;
+      yield val;
+    }
   }
 }
-{{- end -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
+{{- end}}
+
+{{- end}}
 {{- end}}

@@ -13,7 +13,7 @@ type {{$.Service.GoName}}_{{.GoName}}_Stream struct {
 }
 
 // Send serializes and sends a response message to the client.
-func (s *{{$.Service.GoName}}_{{.GoName}}_Stream) Send(msg *{{.Output.GoIdent.GoName}}) error {
+func (s *{{$.Service.GoName}}_{{.GoName}}_Stream) Send(msg *{{$.QualifiedGoIdent .Output.GoIdent}}) error {
   return s.sender.SendMsg(msg, s.useJSON)
 }
 
@@ -38,17 +38,17 @@ type {{$.Service.GoName}}_{{.GoName}}_Stream struct {
 }
 
 // Send serializes and sends a response message to the client.
-func (s *{{$.Service.GoName}}_{{.GoName}}_Stream) Send(msg *{{.Output.GoIdent.GoName}}) error {
+func (s *{{$.Service.GoName}}_{{.GoName}}_Stream) Send(msg *{{$.QualifiedGoIdent .Output.GoIdent}}) error {
   return s.sender.SendMsg(msg, s.useJSON)
 }
 
 // Recv blocks until the next client message arrives.
-func (s *{{$.Service.GoName}}_{{.GoName}}_Stream) Recv(ctx context.Context) (*{{.Input.GoIdent.GoName}}, error) {
+func (s *{{$.Service.GoName}}_{{.GoName}}_Stream) Recv(ctx context.Context) (*{{$.QualifiedGoIdent .Input.GoIdent}}, error) {
   natsMsg, err := s.receiver.Recv(ctx)
   if err != nil {
     return nil, err
   }
-  var msg {{.Input.GoIdent.GoName}}
+  var msg {{$.QualifiedGoIdent .Input.GoIdent}}
   if s.useJSON {
     if err := protojson.Unmarshal(natsMsg.Data, &msg); err != nil {
       return nil, fmt.Errorf("failed to decode stream message: %w", err)
@@ -82,12 +82,12 @@ type {{$.Service.GoName}}_{{.GoName}}_Stream struct {
 }
 
 // Recv blocks until the next client message arrives.
-func (s *{{$.Service.GoName}}_{{.GoName}}_Stream) Recv(ctx context.Context) (*{{.Input.GoIdent.GoName}}, error) {
+func (s *{{$.Service.GoName}}_{{.GoName}}_Stream) Recv(ctx context.Context) (*{{$.QualifiedGoIdent .Input.GoIdent}}, error) {
   natsMsg, err := s.receiver.Recv(ctx)
   if err != nil {
     return nil, err
   }
-  var msg {{.Input.GoIdent.GoName}}
+  var msg {{$.QualifiedGoIdent .Input.GoIdent}}
   if s.useJSON {
     if err := protojson.Unmarshal(natsMsg.Data, &msg); err != nil {
       return nil, fmt.Errorf("failed to decode stream message: %w", err)

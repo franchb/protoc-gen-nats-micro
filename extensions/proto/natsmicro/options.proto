@@ -5,7 +5,7 @@ package natsmicro;
 import "google/protobuf/descriptor.proto";
 import "google/protobuf/duration.proto";
 
-option go_package = "github.com/toyz/protoc-gen-nats-micro/gen/nats/micro";
+option go_package = "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro";
 
 // Service-level options for NATS microservices
 message ServiceOptions {
@@ -44,6 +44,11 @@ message ServiceOptions {
   // constructors, and checkers alongside the 7 built-in error codes
   // (INVALID_ARGUMENT, NOT_FOUND, etc.)
   repeated string error_codes = 9;
+
+  // Disable queue subscriptions for this service's grouped endpoints.
+  // When true, the generated service registers plain subscriptions instead of
+  // queue subscriptions.
+  bool queue_group_disabled = 10;
 }
 
 // Endpoint-level options for individual RPC methods
@@ -59,12 +64,36 @@ message EndpointOptions {
   // Endpoint metadata (optional, key-value pairs for endpoint-specific
   // metadata) This metadata is passed to the NATS micro endpoint registration
   map<string, string> metadata = 3;
+
+  // Disable queue subscriptions for this endpoint.
+  bool queue_group_disabled = 4;
+
+  // Subscription pending message limit for this endpoint.
+  // Use -1 for no limit, 0 to keep the library default.
+  int32 pending_msg_limit = 5;
+
+  // Subscription pending byte limit for this endpoint.
+  // Use -1 for no limit, 0 to keep the library default.
+  int32 pending_bytes_limit = 6;
 }
 
 // KV Store options for RPC methods
 // When set, the server handler automatically persists the response
 // into a NATS JetStream KV bucket after processing.
 // The bucket is auto-created during service registration if it doesn't exist.
+enum KVWriteMode {
+  KV_WRITE_MODE_UNSPECIFIED = 0;
+  KV_WRITE_MODE_LAST_WRITE_WINS = 1;
+  KV_WRITE_MODE_COMPARE_AND_SET = 2;
+  KV_WRITE_MODE_CREATE_ONLY = 3;
+}
+
+enum KVPersistFailurePolicy {
+  KV_PERSIST_FAILURE_POLICY_UNSPECIFIED = 0;
+  KV_PERSIST_FAILURE_POLICY_BEST_EFFORT = 1;
+  KV_PERSIST_FAILURE_POLICY_REQUIRED = 2;
+}
+
 message KVStoreOptions {
   // KV bucket name (e.g., "user_profiles")
   string bucket = 1;
@@ -87,6 +116,30 @@ message KVStoreOptions {
   // methods Use this when you want direct client access to KV without RPC
   // involvement
   bool client_only = 6;
+
+  // Bucket-specific metadata (optional).
+  map<string, string> metadata = 7;
+
+  // How long to keep delete markers for TTL-based expirations.
+  // Required for per-key TTL support.
+  google.protobuf.Duration limit_marker_ttl = 8;
+
+  // TTL applied when the generator creates a new KV key.
+  // Existing keys retain their current TTL semantics.
+  google.protobuf.Duration key_ttl = 9;
+
+  // TTL applied to generated KV purge helpers so delete markers expire.
+  google.protobuf.Duration purge_ttl = 10;
+
+  // How generated writes behave when the key already exists.
+  KVWriteMode write_mode = 11;
+
+  // Whether generated server auto-persist failures fail the RPC or are logged.
+  KVPersistFailurePolicy persist_failure_policy = 12;
+
+  // Enable native JetStream compression for this KV bucket.
+  // This maps to the client library's bucket compression flag.
+  bool compression = 13;
 }
 
 // Object Store options for RPC methods
@@ -109,6 +162,10 @@ message ObjectStoreOptions {
   // If true, skip server-side auto-persist — only generate client read/write
   // methods
   bool client_only = 5;
+
+  // Enable native JetStream compression for this Object Store bucket.
+  // This maps to the client library's bucket compression flag.
+  bool compression = 6;
 }
 
 // Streaming options for fine-tuning streaming RPC behavior

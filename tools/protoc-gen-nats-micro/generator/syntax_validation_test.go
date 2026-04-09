@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	natspb "github.com/toyz/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 

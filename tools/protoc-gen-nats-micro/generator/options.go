@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	natspb "github.com/toyz/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -33,6 +33,8 @@ type ServiceOptions struct {
 	Skip          bool     // Skip generation for this service
 	UseJSON       bool     // Use JSON encoding instead of binary protobuf
 	ErrorCodes    []string // Custom application-specific error codes
+	// Disable queue subscriptions for grouped endpoints generated from this service.
+	QueueGroupDisabled bool
 }
 
 // GetServiceOptions extracts service options from proto service definition
@@ -80,6 +82,7 @@ func GetServiceOptions(service *protogen.Service) ServiceOptions {
 		if len(svcOpts.ErrorCodes) > 0 {
 			opts.ErrorCodes = svcOpts.ErrorCodes
 		}
+		opts.QueueGroupDisabled = svcOpts.QueueGroupDisabled
 	}
 
 	return opts
@@ -87,23 +90,48 @@ func GetServiceOptions(service *protogen.Service) ServiceOptions {
 
 // EndpointOptions contains metadata about an endpoint
 type EndpointOptions struct {
-	Skip        bool              // Skip generation for this endpoint
-	Timeout     time.Duration     // Endpoint-specific timeout (0 = use service default)
-	Metadata    map[string]string // Endpoint-specific metadata
-	KVStore     *KVStoreOpts      // KV store options (nil if not set)
-	ObjectStore *ObjectStoreOpts  // Object store options (nil if not set)
-	Stream      *StreamOpts       // Streaming options (nil if not set)
-	ChunkedIO   *ChunkedIOOpts    // Chunked I/O helper options (nil if not set)
+	Skip               bool              // Skip generation for this endpoint
+	Timeout            time.Duration     // Endpoint-specific timeout (0 = use service default)
+	Metadata           map[string]string // Endpoint-specific metadata
+	KVStore            *KVStoreOpts      // KV store options (nil if not set)
+	ObjectStore        *ObjectStoreOpts  // Object store options (nil if not set)
+	QueueGroupDisabled bool              // Disable queue subscriptions for this endpoint
+	PendingMsgLimit    int32             // Subscription pending message limit (0 = library default)
+	PendingBytesLimit  int32             // Subscription pending byte limit (0 = library default)
+	Stream             *StreamOpts       // Streaming options (nil if not set)
+	ChunkedIO          *ChunkedIOOpts    // Chunked I/O helper options (nil if not set)
 }
+
+type KVWriteMode int
+
+const (
+	KVWriteModeLastWriteWins KVWriteMode = iota + 1
+	KVWriteModeCompareAndSet
+	KVWriteModeCreateOnly
+)
+
+type KVPersistFailurePolicy int
+
+const (
+	KVPersistFailurePolicyBestEffort KVPersistFailurePolicy = iota + 1
+	KVPersistFailurePolicyRequired
+)
 
 // KVStoreOpts contains KV store persistence options for a method
 type KVStoreOpts struct {
-	Bucket      string        // KV bucket name
-	KeyTemplate string        // Key template with {field} placeholders
-	TTL         time.Duration // TTL for entries (0 = no expiry)
-	Description string        // Human-readable bucket description
-	MaxHistory  int32         // Revisions per key (0 = default 1, max 64)
-	ClientOnly  bool          // Skip server auto-persist; only generate client read/write
+	Bucket               string                 // KV bucket name
+	KeyTemplate          string                 // Key template with {field} placeholders
+	TTL                  time.Duration          // TTL for entries (0 = no expiry)
+	Description          string                 // Human-readable bucket description
+	MaxHistory           int32                  // Revisions per key (0 = default 1, max 64)
+	ClientOnly           bool                   // Skip server auto-persist; only generate client read/write
+	Metadata             map[string]string      // Bucket metadata
+	LimitMarkerTTL       time.Duration          // TTL for delete markers used by TTL expiration
+	KeyTTL               time.Duration          // TTL for newly created keys
+	PurgeTTL             time.Duration          // TTL for purge markers
+	WriteMode            KVWriteMode            // Resolved write behavior
+	PersistFailurePolicy KVPersistFailurePolicy // Resolved server auto-persist failure behavior
+	Compression          bool                   // Enable native JetStream bucket compression
 }
 
 // ObjectStoreOpts contains object store options for a method
@@ -113,6 +141,7 @@ type ObjectStoreOpts struct {
 	TTL         time.Duration // TTL for objects (0 = no expiry)
 	Description string        // Human-readable bucket description
 	ClientOnly  bool          // Skip server auto-persist; only generate client read/write
+	Compression bool          // Enable native JetStream bucket compression
 }
 
 // StreamOpts contains streaming fine-tuning options
@@ -147,19 +176,35 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 		if len(endpointOpts.Metadata) > 0 {
 			opts.Metadata = endpointOpts.Metadata
 		}
+		opts.QueueGroupDisabled = endpointOpts.QueueGroupDisabled
+		opts.PendingMsgLimit = endpointOpts.PendingMsgLimit
+		opts.PendingBytesLimit = endpointOpts.PendingBytesLimit
 	}
 
 	// KV Store options
 	if kvOpts, ok := getExtension[*natspb.KVStoreOptions](methodOpts, natspb.E_KvStore); ok && kvOpts.Bucket != "" {
 		kv := &KVStoreOpts{
-			Bucket:      kvOpts.Bucket,
-			KeyTemplate: kvOpts.KeyTemplate,
-			Description: kvOpts.Description,
-			MaxHistory:  kvOpts.MaxHistory,
-			ClientOnly:  kvOpts.ClientOnly,
+			Bucket:               kvOpts.Bucket,
+			KeyTemplate:          kvOpts.KeyTemplate,
+			Description:          kvOpts.Description,
+			MaxHistory:           kvOpts.MaxHistory,
+			ClientOnly:           kvOpts.ClientOnly,
+			Metadata:             kvOpts.Metadata,
+			WriteMode:            resolveKVWriteMode(kvOpts),
+			PersistFailurePolicy: resolveKVPersistFailurePolicy(kvOpts),
+			Compression:          kvOpts.Compression,
 		}
 		if kvOpts.Ttl != nil {
 			kv.TTL = kvOpts.Ttl.AsDuration()
+		}
+		if kvOpts.LimitMarkerTtl != nil {
+			kv.LimitMarkerTTL = kvOpts.LimitMarkerTtl.AsDuration()
+		}
+		if kvOpts.KeyTtl != nil {
+			kv.KeyTTL = kvOpts.KeyTtl.AsDuration()
+		}
+		if kvOpts.PurgeTtl != nil {
+			kv.PurgeTTL = kvOpts.PurgeTtl.AsDuration()
 		}
 		opts.KVStore = kv
 	}
@@ -171,6 +216,7 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 			KeyTemplate: objOpts.KeyTemplate,
 			Description: objOpts.Description,
 			ClientOnly:  objOpts.ClientOnly,
+			Compression: objOpts.Compression,
 		}
 		if objOpts.Ttl != nil {
 			obj.TTL = objOpts.Ttl.AsDuration()
@@ -221,6 +267,47 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 	}
 
 	return opts
+}
+
+func resolveKVWriteMode(kvOpts *natspb.KVStoreOptions) KVWriteMode {
+	switch kvOpts.WriteMode {
+	case natspb.KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS:
+		return KVWriteModeLastWriteWins
+	case natspb.KVWriteMode_KV_WRITE_MODE_COMPARE_AND_SET:
+		return KVWriteModeCompareAndSet
+	case natspb.KVWriteMode_KV_WRITE_MODE_CREATE_ONLY:
+		return KVWriteModeCreateOnly
+	default:
+		if kvOpts.KeyTtl != nil {
+			return KVWriteModeCompareAndSet
+		}
+		return KVWriteModeLastWriteWins
+	}
+}
+
+func resolveKVPersistFailurePolicy(kvOpts *natspb.KVStoreOptions) KVPersistFailurePolicy {
+	switch kvOpts.PersistFailurePolicy {
+	case natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED:
+		return KVPersistFailurePolicyRequired
+	default:
+		return KVPersistFailurePolicyBestEffort
+	}
+}
+
+func IsKVWriteModeLastWriteWins(opts *KVStoreOpts) bool {
+	return opts != nil && opts.WriteMode == KVWriteModeLastWriteWins
+}
+
+func IsKVWriteModeCompareAndSet(opts *KVStoreOpts) bool {
+	return opts != nil && opts.WriteMode == KVWriteModeCompareAndSet
+}
+
+func IsKVWriteModeCreateOnly(opts *KVStoreOpts) bool {
+	return opts != nil && opts.WriteMode == KVWriteModeCreateOnly
+}
+
+func IsKVPersistFailureRequired(opts *KVStoreOpts) bool {
+	return opts != nil && opts.PersistFailurePolicy == KVPersistFailurePolicyRequired
 }
 
 // IsServerStreaming returns true if the method has server-side streaming

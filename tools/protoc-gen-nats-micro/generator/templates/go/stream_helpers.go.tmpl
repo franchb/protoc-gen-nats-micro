@@ -147,6 +147,7 @@ func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
       return nil, errors.New("stream closed")
     }
     if msg.Header.Get(natsStreamEndHeader) == "true" {
+      _ = r.Close()
       if code, desc, ok := checkStreamErrorHeaders(msg.Header); ok {
         if desc == "" {
           desc = "stream error"
@@ -240,4 +241,7 @@ func writeFileAtomically(path string, fn func(io.Writer) error) error {
 var (
   _ = strconv.Itoa
   _ = sync.Mutex{}
+  _ = io.EOF
+  _ = os.Remove
+  _ = filepath.Dir
 )

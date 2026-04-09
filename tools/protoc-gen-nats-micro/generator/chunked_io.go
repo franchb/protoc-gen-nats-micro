@@ -64,6 +64,14 @@ func ValidateChunkedIO(method *protogen.Method, opts *ChunkedIOOpts) error {
 			opts.ChunkField,
 		)
 	}
+	if field.Desc.Cardinality() == protoreflect.Repeated {
+		return fmt.Errorf(
+			"method %s: chunked_io field %q on %s must be singular bytes, not repeated",
+			method.GoName,
+			opts.ChunkField,
+			msg.GoIdent.GoName,
+		)
+	}
 	if field.Desc.Kind() != protoreflect.BytesKind {
 		return fmt.Errorf(
 			"method %s: chunked_io field %q on %s must be bytes",

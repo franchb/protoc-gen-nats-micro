@@ -20,6 +20,7 @@ export interface I{{.Service.GoName}}NatsClient {
 {{- if $endpointOpts.KVStore}}
   get{{.GoName}}FromKV(key: string): Promise<pb.{{.Output.GoIdent.GoName}}>;
   put{{.GoName}}ToKV(key: string, val: pb.{{.Output.GoIdent.GoName}}): Promise<void>;
+  purge{{.GoName}}FromKV(key: string): Promise<void>;
 {{- end}}
 {{- if $endpointOpts.ObjectStore}}
   get{{.GoName}}FromObjectStore(key: string): Promise<pb.{{.Output.GoIdent.GoName}}>;
@@ -172,7 +173,35 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
     }
     const kv = await this.js.views.kv('{{$endpointOpts.KVStore.Bucket}}');
     const data = toBinary(pb.{{.Output.GoIdent.GoName}}Schema, val);
+    {{- if IsKVWriteModeCompareAndSet $endpointOpts.KVStore}}
+    // Compare-and-set: create or update with revision check
+    try {
+      await kv.create(key, data);
+    } catch {
+      const entry = await kv.get(key);
+      if (entry) {
+        await kv.update(key, data, entry.revision);
+      } else {
+        await kv.create(key, data);
+      }
+    }
+    {{- else if IsKVWriteModeCreateOnly $endpointOpts.KVStore}}
+    // Create-only: fail if key already exists
+    await kv.create(key, data);
+    {{- else}}
     await kv.put(key, data);
+    {{- end}}
+  }
+
+  /**
+   * Purge a key and all its revisions from the KV Store.
+   */
+  async purge{{.GoName}}FromKV(key: string): Promise<void> {
+    if (!this.js) {
+      throw new Error('JetStream not configured; pass jetstream option to enable KV operations');
+    }
+    const kv = await this.js.views.kv('{{$endpointOpts.KVStore.Bucket}}');
+    await kv.purge(key);
   }
 {{- end}}
 
@@ -272,21 +301,68 @@ export class ClientStreamReceiver<T> {
   ) {}
 
   /**
-   * Async iterator for receiving streamed messages
+   * Receive the next message. Returns null on end-of-stream.
    */
-  async *[Symbol.asyncIterator](): AsyncIterableIterator<T> {
+  async recv(): Promise<T | null> {
+    if (this.done) return null;
     for await (const msg of this.sub) {
       if (msg.headers?.get('Nats-Stream-End') === 'true') {
-        // Check for error
         const errorCode = msg.headers?.get('Nats-Service-Error-Code') || msg.headers?.get('Status');
         if (errorCode) {
           const desc = msg.headers?.get('Nats-Service-Error') || msg.headers?.get('Description') || 'Stream error';
           throw new Error(`Stream error [${errorCode}]: ${desc}`);
         }
         this.done = true;
-        break;
+        return null;
       }
-      yield this.decoder(msg.data);
+      return this.decoder(msg.data);
+    }
+    return null;
+  }
+
+  /**
+   * Async iterator for receiving streamed messages
+   */
+  async *[Symbol.asyncIterator](): AsyncIterableIterator<T> {
+    while (true) {
+      const val = await this.recv();
+      if (val === null) break;
+      yield val;
+    }
+  }
+
+  /**
+   * Drain all stream chunks into a single Uint8Array.
+   * WARNING: entire payload is buffered in memory.
+   */
+  async recvBytes(field: string = 'data'): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    for await (const msg of this) {
+      const chunk = (msg as any)[field];
+      if (chunk) chunks.push(chunk);
+    }
+    const total = chunks.reduce((s, c) => s + c.length, 0);
+    const result = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      result.set(c, offset);
+      offset += c.length;
+    }
+    return result;
+  }
+
+  /**
+   * Stream chunks to a Web WritableStream.
+   */
+  async recvToStream(writable: WritableStream<Uint8Array>, field: string = 'data'): Promise<void> {
+    const writer = writable.getWriter();
+    try {
+      for await (const msg of this) {
+        const chunk = (msg as any)[field];
+        if (chunk) await writer.write(chunk);
+      }
+    } finally {
+      await writer.close();
     }
   }
 

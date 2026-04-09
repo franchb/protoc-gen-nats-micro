@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"sync"
@@ -141,192 +140,6 @@ func NewStreamDemoServiceUnavailableError(method, message string) error {
 	return &StreamDemoServiceError{Code: StreamDemoServiceErrCodeUnavailable, Method: method, Message: message}
 }
 
-// Stream protocol header constants
-const (
-	natsStreamSeqHeader   = "Nats-Stream-Seq"
-	natsStreamEndHeader   = "Nats-Stream-End"
-	natsStreamInboxHeader = "Nats-Stream-Inbox"
-	natsStreamErrorHeader = "Nats-Stream-Error"
-)
-
-// ServerStreamSender is the server-side interface for sending streaming responses
-type ServerStreamSender interface {
-	// Send publishes one message to the client
-	Send(data []byte) error
-	// SendMsg serializes and sends a proto message to the client
-	SendMsg(msg proto.Message, useJSON bool) error
-	// Close sends the end-of-stream marker to the client
-	Close() error
-	// CloseWithError sends an error and end-of-stream marker to the client
-	CloseWithError(code string, message string) error
-}
-
-// serverStreamSender implements ServerStreamSender using NATS publish
-type serverStreamSender struct {
-	nc      *nats.Conn
-	subject string // The client's reply inbox
-	seq     int
-	mu      sync.Mutex
-	closed  bool
-}
-
-func newServerStreamSender(nc *nats.Conn, replySubject string) *serverStreamSender {
-	return &serverStreamSender{
-		nc:      nc,
-		subject: replySubject,
-		seq:     0,
-	}
-}
-
-func (s *serverStreamSender) Send(data []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return errors.New("stream is closed")
-	}
-	s.seq++
-	msg := &nats.Msg{
-		Subject: s.subject,
-		Data:    data,
-		Header:  nats.Header{},
-	}
-	msg.Header.Set(natsStreamSeqHeader, strconv.Itoa(s.seq))
-	return s.nc.PublishMsg(msg)
-}
-
-func (s *serverStreamSender) SendMsg(msg proto.Message, useJSON bool) error {
-	var data []byte
-	var err error
-	if useJSON {
-		data, err = protojson.Marshal(msg)
-	} else {
-		data, err = proto.Marshal(msg)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to marshal stream message: %w", err)
-	}
-	return s.Send(data)
-}
-
-func (s *serverStreamSender) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil
-	}
-	s.closed = true
-	msg := &nats.Msg{
-		Subject: s.subject,
-		Data:    nil,
-		Header:  nats.Header{},
-	}
-	msg.Header.Set(natsStreamEndHeader, "true")
-	return s.nc.PublishMsg(msg)
-}
-
-func (s *serverStreamSender) CloseWithError(code string, message string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil
-	}
-	s.closed = true
-	msg := &nats.Msg{
-		Subject: s.subject,
-		Data:    nil,
-		Header:  nats.Header{},
-	}
-	msg.Header.Set(natsStreamEndHeader, "true")
-	msg.Header.Set("Status", code)
-	msg.Header.Set("Description", message)
-	return s.nc.PublishMsg(msg)
-}
-
-// ClientStreamReceiver receives streaming messages from a server
-type ClientStreamReceiver struct {
-	sub     *nats.Subscription
-	msgCh   chan *nats.Msg
-	done    chan struct{}
-	lastErr error
-	ordered bool
-	lastSeq int
-	mu      sync.Mutex
-}
-
-func newClientStreamReceiver(nc *nats.Conn, inbox string, ordered bool) (*ClientStreamReceiver, error) {
-	msgCh := make(chan *nats.Msg, 64)
-	done := make(chan struct{})
-
-	sub, err := nc.Subscribe(inbox, func(msg *nats.Msg) {
-		// Check for end-of-stream
-		if msg.Header.Get(natsStreamEndHeader) == "true" {
-			close(done)
-			return
-		}
-		select {
-		case msgCh <- msg:
-		case <-done:
-		}
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe to stream inbox: %w", err)
-	}
-
-	return &ClientStreamReceiver{
-		sub:     sub,
-		msgCh:   msgCh,
-		done:    done,
-		ordered: ordered,
-	}, nil
-}
-
-// Recv blocks until the next message arrives or the stream ends.
-// Returns nil, io.EOF when the stream is complete.
-// Returns the raw NATS message for caller to decode.
-func (r *ClientStreamReceiver) Recv(ctx context.Context) (*nats.Msg, error) {
-	select {
-	case msg, ok := <-r.msgCh:
-		if !ok {
-			return nil, fmt.Errorf("stream closed")
-		}
-		// Check for error in stream
-		if status := msg.Header.Get("Status"); status != "" {
-			desc := msg.Header.Get("Description")
-			return nil, fmt.Errorf("stream error [%s]: %s", status, desc)
-		}
-		// Enforce ordering if requested
-		if r.ordered {
-			seqStr := msg.Header.Get(natsStreamSeqHeader)
-			if seqStr != "" {
-				seq, _ := strconv.Atoi(seqStr)
-				r.mu.Lock()
-				expected := r.lastSeq + 1
-				r.lastSeq = seq
-				r.mu.Unlock()
-				if seq != expected {
-					return nil, fmt.Errorf("out-of-order stream message: got seq %d, expected %d", seq, expected)
-				}
-			}
-		}
-		return msg, nil
-	case <-r.done:
-		return nil, fmt.Errorf("EOF")
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-// Close unsubscribes from the stream
-func (r *ClientStreamReceiver) Close() error {
-	return r.sub.Unsubscribe()
-}
-
-// Suppress unused import warnings
-var (
-	_ = strconv.Itoa
-	_ = sync.Mutex{}
-)
-
 // StreamDemoServiceNats is the NATS service interface for StreamDemoService
 type StreamDemoServiceNats interface {
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
@@ -417,8 +230,6 @@ func RegisterStreamDemoServiceHandlers(nc *nats.Conn, impl StreamDemoServiceNats
 
 	// Auto-create KV and Object Store buckets if JetStream is available
 	if cfg.js != nil {
-		ctx := context.Background()
-		_ = ctx
 	}
 
 	// Map of endpoint names to their handlers
@@ -445,6 +256,39 @@ func RegisterStreamDemoServiceHandlers(nc *nats.Conn, impl StreamDemoServiceNats
 		"chat": {},
 	}
 
+	type endpointRegistrationConfig struct {
+		queueGroupDisabled bool
+		pendingMsgLimit    int
+		pendingBytesLimit  int
+	}
+
+	endpointRegistrationConfigs := map[string]endpointRegistrationConfig{
+
+		"ping": {
+			queueGroupDisabled: false,
+			pendingMsgLimit:    0,
+			pendingBytesLimit:  0,
+		},
+
+		"count_up": {
+			queueGroupDisabled: false,
+			pendingMsgLimit:    0,
+			pendingBytesLimit:  0,
+		},
+
+		"sum": {
+			queueGroupDisabled: false,
+			pendingMsgLimit:    0,
+			pendingBytesLimit:  0,
+		},
+
+		"chat": {
+			queueGroupDisabled: false,
+			pendingMsgLimit:    0,
+			pendingBytesLimit:  0,
+		},
+	}
+
 	// Use interface to handle both Service and Group
 	type endpointAdder interface {
 		AddEndpoint(string, micro.Handler, ...micro.EndpointOpt) error
@@ -452,7 +296,8 @@ func RegisterStreamDemoServiceHandlers(nc *nats.Conn, impl StreamDemoServiceNats
 
 	var adder endpointAdder = svc
 	if cfg.subjectPrefix != "" {
-		adder = svc.AddGroup(cfg.subjectPrefix)
+		groupOpts := []micro.GroupOpt{}
+		adder = svc.AddGroup(cfg.subjectPrefix, groupOpts...)
 	}
 
 	// Register all endpoints with their metadata
@@ -460,6 +305,14 @@ func RegisterStreamDemoServiceHandlers(nc *nats.Conn, impl StreamDemoServiceNats
 		opts := []micro.EndpointOpt{}
 		if metadata, exists := endpointMetadata[name]; exists && len(metadata) > 0 {
 			opts = append(opts, micro.WithEndpointMetadata(metadata))
+		}
+		if regCfg, exists := endpointRegistrationConfigs[name]; exists {
+			if regCfg.queueGroupDisabled {
+				opts = append(opts, micro.WithEndpointQueueGroupDisabled())
+			}
+			if regCfg.pendingMsgLimit != 0 || regCfg.pendingBytesLimit != 0 {
+				opts = append(opts, micro.WithEndpointPendingLimits(regCfg.pendingMsgLimit, regCfg.pendingBytesLimit))
+			}
 		}
 		if err := adder.AddEndpoint(name, handler, opts...); err != nil {
 			return nil, fmt.Errorf("failed to add endpoint %s: %w", name, err)
@@ -609,7 +462,15 @@ func (h *streamDemoServiceHandlers) Ping(req micro.Request) {
 // CountUp handles server-side streaming RPC.
 // Client sends a single request; server streams back multiple responses.
 func (h *streamDemoServiceHandlers) CountUp(req micro.Request) {
+	// Determine effective timeout: endpoint-specific timeout overrides service timeout
+	timeout := h.serviceTimeout
+
 	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
 	if req.Headers() != nil {
 		ctx = WithIncomingHeaders(ctx, req.Headers())
@@ -629,7 +490,10 @@ func (h *streamDemoServiceHandlers) CountUp(req micro.Request) {
 	}
 
 	// Get the client's reply subject from the NATS request
-	replySubject := req.Headers().Get("Reply-To")
+	var replySubject string
+	if req.Headers() != nil {
+		replySubject = req.Headers().Get("Reply-To")
+	}
 	if replySubject == "" {
 		// Fall back to using the NATS request reply subject
 		// We need to signal to the client that we're starting a stream
@@ -657,7 +521,15 @@ func (h *streamDemoServiceHandlers) CountUp(req micro.Request) {
 // Sum handles client-side streaming RPC.
 // Client streams multiple requests; server responds once.
 func (h *streamDemoServiceHandlers) Sum(req micro.Request) {
+	// Determine effective timeout: endpoint-specific timeout overrides service timeout
+	timeout := h.serviceTimeout
+
 	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
 	if req.Headers() != nil {
 		ctx = WithIncomingHeaders(ctx, req.Headers())
@@ -684,8 +556,23 @@ func (h *streamDemoServiceHandlers) Sum(req micro.Request) {
 
 	resp, err := h.impl.Sum(ctx, stream)
 	if err != nil {
-		// Cannot send error via req since we already responded with ack
-		log.Printf("[nats-micro] ERROR: Sum client stream handler failed: %v", err)
+		// Ack was already sent, so we can't use req.Error().
+		// Publish the error back to the client's Reply-To inbox using the stream
+		// error protocol, so the client doesn't hang waiting for a response.
+		fmt.Fprintf(os.Stderr, "[nats-micro] ERROR: Sum client stream handler failed: %v\n", err)
+		var replySubject string
+		if req.Headers() != nil {
+			replySubject = req.Headers().Get("Reply-To")
+		}
+		if replySubject != "" {
+			errMsg := &nats.Msg{
+				Subject: replySubject,
+				Header:  nats.Header{},
+			}
+			errMsg.Header.Set("Nats-Service-Error-Code", StreamDemoServiceErrCodeInternal)
+			errMsg.Header.Set("Nats-Service-Error", err.Error())
+			h.nc.PublishMsg(errMsg)
+		}
 		return
 	}
 
@@ -697,13 +584,16 @@ func (h *streamDemoServiceHandlers) Sum(req micro.Request) {
 		data, err = proto.Marshal(resp)
 	}
 	if err != nil {
-		log.Printf("[nats-micro] ERROR: failed to marshal Sum response: %v", err)
+		fmt.Fprintf(os.Stderr, "[nats-micro] ERROR: failed to marshal Sum response: %v\n", err)
 		return
 	}
 
 	// Publish the final response to the client's reply inbox
 	// The client will have subscribed for the reply
-	replySubject := req.Headers().Get("Reply-To")
+	var replySubject string
+	if req.Headers() != nil {
+		replySubject = req.Headers().Get("Reply-To")
+	}
 	if replySubject != "" {
 		h.nc.Publish(replySubject, data)
 	}
@@ -712,7 +602,15 @@ func (h *streamDemoServiceHandlers) Sum(req micro.Request) {
 // Chat handles bidirectional streaming RPC.
 // Both client and server can send and receive messages concurrently.
 func (h *streamDemoServiceHandlers) Chat(req micro.Request) {
+	// Determine effective timeout: endpoint-specific timeout overrides service timeout
+	timeout := h.serviceTimeout
+
 	ctx := context.Background()
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 
 	if req.Headers() != nil {
 		ctx = WithIncomingHeaders(ctx, req.Headers())
@@ -728,7 +626,10 @@ func (h *streamDemoServiceHandlers) Chat(req micro.Request) {
 	defer receiver.Close()
 
 	// Get/create the reply subject for server→client messages
-	clientInbox := req.Headers().Get("Reply-To")
+	var clientInbox string
+	if req.Headers() != nil {
+		clientInbox = req.Headers().Get("Reply-To")
+	}
 	if clientInbox == "" {
 		clientInbox = nats.NewInbox()
 	}
@@ -944,10 +845,10 @@ func (c *StreamDemoServiceNatsClient) Ping(ctx context.Context, req *PingRequest
 			if headersPtr, ok := invokerCtx.Value(responseHeadersKey).(*nats.Header); ok && headersPtr != nil {
 				*headersPtr = msg.Header
 			}
-		} // Check if this is an error response from the service
-		if msg.Header.Get("Status") != "" {
-			code := msg.Header.Get("Status")
-			description := msg.Header.Get("Description")
+		} // Check if this is an error response from the service (NATS micro headers)
+		if msg.Header.Get("Nats-Service-Error-Code") != "" {
+			code := msg.Header.Get("Nats-Service-Error-Code")
+			description := msg.Header.Get("Nats-Service-Error")
 			return &StreamDemoServiceError{
 				Code:    code,
 				Method:  method,
@@ -1125,6 +1026,14 @@ func (s *StreamDemoService_Sum_ClientStream) CloseAndRecv(ctx context.Context) (
 	natsMsg, err := sub.NextMsgWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to receive response: %w", err)
+	}
+
+	if code, description, ok := checkStreamErrorHeaders(natsMsg.Header); ok {
+		return nil, &StreamDemoServiceError{
+			Code:    code,
+			Method:  "Sum",
+			Message: description,
+		}
 	}
 
 	var resp SumResponse

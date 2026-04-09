@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	natspb "github.com/toyz/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
@@ -102,6 +102,29 @@ func TestGenerateFileRejectsChunkedIOWithExtraFields(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "contain only bytes field") || !strings.Contains(err.Error(), "got 2 fields") {
 		t.Fatalf("GenerateFile() error = %q, want simple chunk message validation failure with field count", err)
+	}
+}
+
+func TestGenerateFileRejectsChunkedIOWithRepeatedBytes(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("DownloadRequest", stringField("id", 1)),
+		messageDescriptor("SnapshotChunk", repeatedBytesField("data", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
+			ChunkField:       "data",
+			DefaultChunkSize: 65536,
+		}),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewGoLanguage()
+
+	err := GenerateFile(gen, target, lang)
+	if err == nil {
+		t.Fatal("GenerateFile() succeeded, want singular bytes validation error")
+	}
+	if !strings.Contains(err.Error(), "singular bytes") {
+		t.Fatalf("GenerateFile() error = %q, want singular bytes validation failure", err)
 	}
 }
 
@@ -286,29 +309,24 @@ func TestGenerateFileEmitsChunkedHelpersForTypeScript(t *testing.T) {
 		t.Fatal("failed to find generated TypeScript service file")
 	}
 
-	// Chunked receiver subclass should be generated
-	if !strings.Contains(tsFile, "class BlobService_Download_ChunkedReceiver extends ClientStreamReceiver") {
-		t.Error("TS file missing ChunkedReceiver subclass")
+	// ClientStreamReceiver should have recvBytes method inline
+	if !strings.Contains(tsFile, "recvBytes") {
+		t.Error("TS file missing recvBytes() method on ClientStreamReceiver")
 	}
 
-	// recvBytes method should be present
-	if !strings.Contains(tsFile, "async recvBytes(): Promise<Uint8Array>") {
-		t.Error("TS file missing recvBytes() method signature")
+	// recvToWriter method should be present
+	if !strings.Contains(tsFile, "recvToWriter") {
+		t.Error("TS file missing recvToWriter() method")
 	}
 
-	// Field access should use camelCase (data → data)
-	if !strings.Contains(tsFile, "msg.data") {
-		t.Error("TS file should access chunk field as msg.data")
+	// Method should return ClientStreamReceiver type
+	if !strings.Contains(tsFile, "Promise<ClientStreamReceiver<") {
+		t.Error("TS file should return ClientStreamReceiver from download method")
 	}
 
-	// Method should return chunked receiver type
-	if !strings.Contains(tsFile, "Promise<BlobService_Download_ChunkedReceiver>") {
-		t.Error("TS file should return ChunkedReceiver from download method")
-	}
-
-	// Constructor should use chunked receiver
-	if !strings.Contains(tsFile, "new BlobService_Download_ChunkedReceiver(sub") {
-		t.Error("TS file should construct ChunkedReceiver instance")
+	// Constructor should use ClientStreamReceiver
+	if !strings.Contains(tsFile, "new ClientStreamReceiver<") {
+		t.Error("TS file should construct ClientStreamReceiver instance")
 	}
 }
 
@@ -344,9 +362,9 @@ func TestGenerateFileEmitsClientStreamingForTypeScript(t *testing.T) {
 		t.Fatal("failed to find generated TypeScript service file")
 	}
 
-	// ClientStreamSender class should be generated
-	if !strings.Contains(tsFile, "ClientStreamSender") {
-		t.Error("TS file missing ClientStreamSender class")
+	// Per-method ClientStream class should be generated
+	if !strings.Contains(tsFile, "_ClientStream") {
+		t.Error("TS file missing per-method ClientStream class")
 	}
 
 	// closeAndRecv method should be present
@@ -364,18 +382,13 @@ func TestGenerateFileEmitsClientStreamingForTypeScript(t *testing.T) {
 		t.Error("TS file missing Nats-Stream-Inbox header usage")
 	}
 
-	// Client method should initiate handshake
-	if !strings.Contains(tsFile, "Nats-Stream-Inbox") {
-		t.Error("TS file should use Nats-Stream-Inbox in handshake")
-	}
-
 	// Interface should have client-streaming method
-	if !strings.Contains(tsFile, "sum(): Promise<ClientStreamSender<") {
+	if !strings.Contains(tsFile, "sum(): Promise<BlobService_Sum_ClientStream>") {
 		t.Error("TS interface missing client-streaming method signature")
 	}
 
 	// Service interface should have client-streaming handler
-	if !strings.Contains(tsFile, "sum(stream: AsyncIterableIterator<") {
+	if !strings.Contains(tsFile, "sum(stream: ClientStreamReader<") {
 		t.Error("TS service interface missing client-streaming handler signature")
 	}
 }
@@ -415,24 +428,24 @@ func TestGenerateFileEmitsChunkedUploadForTypeScript(t *testing.T) {
 		t.Fatal("failed to find generated TypeScript service file")
 	}
 
-	// ChunkedClientStreamSender subclass should be generated
-	if !strings.Contains(tsFile, "ChunkedClientStreamSender") {
-		t.Error("TS file missing ChunkedClientStreamSender subclass")
-	}
-
-	// sendBytes method should be present
+	// Per-method ClientStream class should have sendBytes for chunked upload
 	if !strings.Contains(tsFile, "sendBytes") {
-		t.Error("TS file missing sendBytes() method")
+		t.Error("TS file missing sendBytes() method on ClientStream")
 	}
 
-	// ChunkedClientStreamSender should extend ClientStreamSender
-	if !strings.Contains(tsFile, "extends ClientStreamSender") {
-		t.Error("ChunkedClientStreamSender should extend ClientStreamSender")
+	// sendReader should be present for chunked upload
+	if !strings.Contains(tsFile, "sendReader") {
+		t.Error("TS file missing sendReader() method")
 	}
 
-	// Method return type should be the chunked sender
-	if !strings.Contains(tsFile, "Promise<BlobService_Upload_ChunkedClientStreamSender>") {
-		t.Error("TS file should return ChunkedClientStreamSender from upload method")
+	// sendFile should be present for chunked upload
+	if !strings.Contains(tsFile, "sendFile") {
+		t.Error("TS file missing sendFile() method")
+	}
+
+	// Per-method ClientStream class should be returned
+	if !strings.Contains(tsFile, "_ClientStream") {
+		t.Error("TS file should use per-method ClientStream class")
 	}
 
 	// Nats-Stream-Inbox should be used
@@ -477,24 +490,24 @@ func TestGenerateFileEmitsChunkedHelpersForPython(t *testing.T) {
 		t.Fatal("failed to find generated Python service file")
 	}
 
-	// Chunked receiver subclass should be generated
-	if !strings.Contains(pyFile, "class BlobService_Download_ChunkedReceiver(ClientStreamReceiver)") {
-		t.Error("Python file missing ChunkedReceiver subclass")
+	// ClientStreamReceiver should have recv_bytes method inline
+	if !strings.Contains(pyFile, "recv_bytes") {
+		t.Error("Python file missing recv_bytes() method on ClientStreamReceiver")
 	}
 
-	// recv_bytes method should be present
-	if !strings.Contains(pyFile, "async def recv_bytes(self) -> bytes") {
-		t.Error("Python file missing recv_bytes() method signature")
+	// recv_to_writer method should be present
+	if !strings.Contains(pyFile, "recv_to_writer") {
+		t.Error("Python file missing recv_to_writer() method")
 	}
 
-	// Field access should use proto field name (data)
-	if !strings.Contains(pyFile, "msg.data") {
-		t.Error("Python file should access chunk field as msg.data")
+	// recv_to_file method should be present
+	if !strings.Contains(pyFile, "recv_to_file") {
+		t.Error("Python file missing recv_to_file() method")
 	}
 
-	// Method should return chunked receiver type
-	if !strings.Contains(pyFile, "BlobService_Download_ChunkedReceiver") {
-		t.Error("Python file should reference ChunkedReceiver")
+	// Method should return ClientStreamReceiver type
+	if !strings.Contains(pyFile, "ClientStreamReceiver") {
+		t.Error("Python file should reference ClientStreamReceiver")
 	}
 }
 
@@ -575,7 +588,7 @@ func TestGenerateFileEmitsClientStreamingForPython(t *testing.T) {
 
 	// Verify client-streaming code was generated
 	expectedSnippets := []string{
-		"ClientStreamSender",
+		"_ClientStream",
 		"close_and_recv",
 		"async def send(",
 		"Nats-Stream-Inbox",
@@ -636,9 +649,10 @@ func TestGenerateFileEmitsChunkedUploadForPython(t *testing.T) {
 
 	// Verify chunked upload helpers were generated
 	expectedSnippets := []string{
-		"ChunkedClientStreamSender",
+		"_ClientStream",
 		"send_bytes",
-		"ClientStreamSender",
+		"send_reader",
+		"send_file",
 		"close_and_recv",
 	}
 	for _, snippet := range expectedSnippets {
@@ -647,18 +661,24 @@ func TestGenerateFileEmitsChunkedUploadForPython(t *testing.T) {
 		}
 	}
 
-	// Verify the send_bytes sets the chunk field
-	if !strings.Contains(pyFile, "msg.data = data") {
-		t.Error("ChunkedClientStreamSender.send_bytes should set the chunk field 'data'")
+	// Verify the send_bytes sets the chunk field via setattr
+	if !strings.Contains(pyFile, `"data"`) {
+		t.Error("send_bytes should reference the chunk field 'data'")
 	}
 }
 
 func newTestPlugin(t *testing.T, file *descriptorpb.FileDescriptorProto) (*protogen.Plugin, *protogen.File) {
 	t.Helper()
 
+	return newTestPluginWithFiles(t, file.GetName(), file)
+}
+
+func newTestPluginWithFiles(t *testing.T, fileToGenerate string, files ...*descriptorpb.FileDescriptorProto) (*protogen.Plugin, *protogen.File) {
+	t.Helper()
+
 	req := &pluginpb.CodeGeneratorRequest{
-		FileToGenerate: []string{file.GetName()},
-		ProtoFile:      []*descriptorpb.FileDescriptorProto{file},
+		FileToGenerate: []string{fileToGenerate},
+		ProtoFile:      files,
 	}
 
 	gen, err := protogen.Options{}.New(req)
@@ -666,9 +686,9 @@ func newTestPlugin(t *testing.T, file *descriptorpb.FileDescriptorProto) (*proto
 		t.Fatalf("protogen.Options.New() error = %v", err)
 	}
 
-	target := gen.FilesByPath[file.GetName()]
+	target := gen.FilesByPath[fileToGenerate]
 	if target == nil {
-		t.Fatalf("failed to resolve generated file %q", file.GetName())
+		t.Fatalf("failed to resolve generated file %q", fileToGenerate)
 	}
 
 	return gen, target
@@ -681,7 +701,7 @@ func buildTestFile(t *testing.T, messages []*descriptorpb.DescriptorProto, metho
 		Name:    proto.String("test/blob.proto"),
 		Package: proto.String("test.v1"),
 		Options: &descriptorpb.FileOptions{
-			GoPackage: proto.String("github.com/toyz/protoc-gen-nats-micro/test/blob;blobv1"),
+			GoPackage: proto.String("github.com/franchb/protoc-gen-nats-micro/test/blob;blobv1"),
 		},
 		MessageType: messages,
 		Service: []*descriptorpb.ServiceDescriptorProto{{
@@ -730,5 +750,14 @@ func stringField(name string, number int32) *descriptorpb.FieldDescriptorProto {
 		Number: proto.Int32(number),
 		Label:  descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
 		Type:   descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum(),
+	}
+}
+
+func repeatedBytesField(name string, number int32) *descriptorpb.FieldDescriptorProto {
+	return &descriptorpb.FieldDescriptorProto{
+		Name:   proto.String(name),
+		Number: proto.Int32(number),
+		Label:  descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum(),
+		Type:   descriptorpb.FieldDescriptorProto_TYPE_BYTES.Enum(),
 	}
 }

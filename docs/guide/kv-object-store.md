@@ -20,6 +20,9 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
   option (natsmicro.kv_store) = {
     bucket: "user_profiles"
     key_template: "user.{id}"
+    write_mode: KV_WRITE_MODE_COMPARE_AND_SET
+    persist_failure_policy: KV_PERSIST_FAILURE_POLICY_REQUIRED
+    compression: true
   };
 }
 ```
@@ -43,6 +46,15 @@ Key templates extract values from the **request** message to build the storage k
 | `description`  | `string`   | Bucket description                                      |
 | `max_history`  | `int32`    | Max revisions per key                                   |
 | `ttl`          | `Duration` | Time-to-live for entries                                |
+| `write_mode`   | `enum`     | Existing-key write behavior                             |
+| `persist_failure_policy` | `enum` | Whether server auto-persist is required or best-effort |
+| `compression`  | `bool`     | Enable native JetStream bucket compression              |
+
+Preferred fork usage:
+
+- `KV_WRITE_MODE_COMPARE_AND_SET` for explicit strict updates
+- `KV_PERSIST_FAILURE_POLICY_REQUIRED` when KV persistence is part of the RPC contract
+- `ttl` without `write_mode` is legacy compatibility behavior
 
 ### Generated Methods
 
@@ -66,6 +78,7 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
   option (natsmicro.object_store) = {
     bucket: "reports"
     key_template: "report.{id}"
+    compression: true
   };
 }
 ```
@@ -74,9 +87,12 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
 
 | Option           | Type     | Description                             |
 | ---------------- | -------- | --------------------------------------- |
-| `bucket`         | `string` | Object store bucket name (auto-created) |
-| `key_template`   | `string` | Template for building the key           |
-| `description`    | `string` | Bucket description                      |
+| `bucket`         | `string`   | Object store bucket name (auto-created) |
+| `key_template`   | `string`   | Template for building the key           |
+| `ttl`            | `Duration` | Time-to-live for objects (optional)     |
+| `description`    | `string`   | Bucket description                      |
+| `client_only`    | `bool`     | Skip server-side auto-persist — only generate client read/write methods |
+| `compression`    | `bool`     | Enable native JetStream bucket compression |
 
 ### Generated Methods
 
@@ -110,9 +126,13 @@ profile, err := client.GetSaveProfileFromKV("user.abc")
 ```
 
 ::: warning
-Without JetStream, KV/Object Store methods will return a runtime error. The RPC methods themselves still work fine — only the auto-persistence and direct store reads require JetStream.
+Without JetStream, KV/Object Store methods will return a runtime error. In KV required-persist mode, the RPC fails instead of silently logging and succeeding.
+:::
+
+::: info
+`compression: true` only configures native JetStream bucket compression during bucket create/update. In this fork it is wired for generated Go service registration only, and it depends on the server's supported JetStream compression mode.
 :::
 
 ::: tip
-Check out the [kvstore-go example](https://github.com/Toyz/protoc-gen-nats-micro/tree/main/examples/kvstore-go) for a complete working demo.
+Check out the [kvstore-go example](https://github.com/franchb/protoc-gen-nats-micro/tree/main/examples/kvstore-go) for a complete working demo.
 :::

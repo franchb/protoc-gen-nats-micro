@@ -314,6 +314,9 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
     ttl: {seconds: 3600}          // Auto-expire after 1 hour (optional)
     description: "User profile cache"  // Bucket description (optional)
     max_history: 5                // Keep 5 revisions per key (optional)
+    write_mode: KV_WRITE_MODE_COMPARE_AND_SET
+    persist_failure_policy: KV_PERSIST_FAILURE_POLICY_REQUIRED
+    compression: true
   };
 }
 ```
@@ -328,6 +331,9 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
 | `description`  | `string`   | Optional. Human-readable bucket description.                                             |
 | `max_history`  | `int32`    | Optional. Revisions to keep per key (default 1, max 64).                                 |
 | `client_only`  | `bool`     | Optional. Skip server-side auto-persist; only generate client read/write methods.        |
+| `write_mode`   | `enum`     | Optional. Explicit existing-key write semantics.                                         |
+| `persist_failure_policy` | `enum` | Optional. Whether server auto-persist is required or best-effort.                  |
+| `compression`  | `bool`     | Optional. Enable native JetStream bucket compression during bucket create/update.         |
 
 **What happens at runtime:**
 
@@ -342,9 +348,24 @@ rpc SaveProfile(SaveProfileRequest) returns (ProfileResponse) {
 - `Get<Method>FromKV(key)` — read a value directly from the KV bucket
 - `Put<Method>ToKV(key, value)` — write a value directly to the KV bucket
 
-**Graceful degradation:** If no JetStream context is provided via `WithJetStream()`, KV writes and bucket creation are silently skipped. If the write fails, a warning is logged but the RPC still succeeds.
+**Explicit write semantics:**
+
+- `KV_WRITE_MODE_LAST_WRITE_WINS` — create with `ttl` for new keys, then overwrite existing keys with `kv.Put(...)`
+- `KV_WRITE_MODE_COMPARE_AND_SET` — create with `ttl` for new keys, then update existing keys with revision-matching CAS
+- `KV_WRITE_MODE_CREATE_ONLY` — only create the key; existing-key writes fail
+
+**Persist failure policy:**
+
+- `KV_PERSIST_FAILURE_POLICY_BEST_EFFORT` — log the KV failure and still return the RPC response
+- `KV_PERSIST_FAILURE_POLICY_REQUIRED` — fail the RPC if KV persistence fails
+
+`ttl` without `write_mode` uses legacy compatibility behavior. In this fork, prefer setting both `write_mode` and `persist_failure_policy` explicitly.
+
+**Graceful degradation:** If no JetStream context is provided via `WithJetStream()`, KV writes and bucket creation are skipped in best-effort mode. In required mode, the RPC fails instead of silently succeeding.
 
 **Auto-creation:** When `WithJetStream(js)` is provided, buckets are automatically created (or updated) during service registration using `CreateOrUpdateKeyValue` with the configured options. No manual bucket setup required.
+
+**Compression:** `compression: true` maps directly to native JetStream bucket compression. In this fork it is wired in generated Go service registration only; it does not add a custom RPC payload codec or a user-selectable compression algorithm.
 
 ### object_store
 
@@ -359,6 +380,7 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
     key_template: "report.{id}"
     ttl: {seconds: 86400}         // Auto-expire after 24 hours (optional)
     description: "Generated reports cache"  // Bucket description (optional)
+    compression: true
   };
 }
 ```
@@ -372,6 +394,7 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
 | `ttl`          | `Duration` | Optional. Auto-expire objects after this duration.                                |
 | `description`  | `string`   | Optional. Human-readable bucket description.                                      |
 | `client_only`  | `bool`     | Optional. Skip server-side auto-persist; only generate client read/write methods. |
+| `compression`  | `bool`     | Optional. Enable native JetStream bucket compression during bucket create/update. |
 
 **Generated client methods:**
 

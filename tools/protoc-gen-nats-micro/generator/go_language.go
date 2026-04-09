@@ -26,7 +26,7 @@ func NewGoLanguage() *GoLanguage {
 // (no per-service context) and writes the result to g.
 func (g *GoLanguage) executeFileTemplate(out *protogen.GeneratedFile, file *protogen.File, tmplName string) error {
 	var buf bytes.Buffer
-	if err := g.templates.ExecuteTemplate(&buf, tmplName, TemplateData{File: file}); err != nil {
+	if err := g.templates.ExecuteTemplate(&buf, tmplName, TemplateData{File: file, GeneratedFile: out}); err != nil {
 		return fmt.Errorf("execute template %s: %w", tmplName, err)
 	}
 	out.P(buf.String())

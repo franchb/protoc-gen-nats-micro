@@ -1,6 +1,6 @@
 # protoc-gen-nats-micro
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/toyz/protoc-gen-nats-micro)](https://github.com/Toyz/protoc-gen-nats-micro)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/franchb/protoc-gen-nats-micro)](https://github.com/franchb/protoc-gen-nats-micro)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A Protocol Buffers compiler plugin that generates type-safe NATS microservice code using the official `nats.io/micro` framework.
@@ -43,7 +43,10 @@ Existing NATS code generation tools like [nRPC](https://github.com/nats-rpc/nrpc
 - **Standard tooling** - Works with `buf`, `protoc`, existing workflows
 - **Automatic service discovery** - Via NATS, no external dependencies
 - **Built-in load balancing** - NATS queue groups
+- **KV/Object Store helpers** - Auto-persist RPC responses to JetStream KV and Object Store
+- **Backpressure controls** - Per-endpoint pending limits and optional queue-group disable
 - **API versioning** - Subject prefix isolation
+- **Chunked blob helpers** - Go `io.Reader` / `io.Writer` helpers for streaming large payloads
 
 ## Quick Start
 
@@ -57,8 +60,16 @@ Existing NATS code generation tools like [nRPC](https://github.com/nats-rpc/nrpc
 ### Installation
 
 ```bash
-go install github.com/toyz/protoc-gen-nats-micro/cmd/protoc-gen-nats-micro@latest
+go install github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro@latest
 ```
+
+### Vendored Proto Options
+
+Copy `extensions/proto/natsmicro/options.proto` from this repo into your project at `protos/natsmicro/options.proto`. Keep `import "natsmicro/options.proto";` in your service protos and run `buf generate` against your local proto tree.
+
+This repo vendors the upstream `google/api` protos locally under
+`third_party/googleapis`, so its own `buf generate` flow does not depend on the
+`buf.build/googleapis/googleapis` registry module.
 
 ### Generate Code
 
@@ -477,6 +488,41 @@ rpc GetProduct(...) returns (...) {
 
 Common patterns: operation type (`read|write|delete`), caching (`cacheable`, `cache_ttl`), performance (`expensive`), auth (`requires_auth`), versioning (`deprecated`)
 
+### Queue Groups and Pending Limits
+
+Use queue-group controls when you need plain fan-out subscriptions instead of
+the default queue-based load balancing, or when you want endpoint-level
+slow-consumer protection.
+
+```protobuf
+service ProductService {
+  option (natsmicro.service) = {
+    queue_group_disabled: true
+  };
+
+  rpc ImportCatalog(ImportCatalogRequest) returns (ImportCatalogResponse) {
+    option (natsmicro.endpoint) = {
+      pending_msg_limit: 128
+      pending_bytes_limit: 1048576
+    };
+  }
+
+  rpc BroadcastInventory(InventoryEvent) returns (google.protobuf.Empty) {
+    option (natsmicro.endpoint) = {
+      queue_group_disabled: true
+    };
+  }
+}
+```
+
+- `queue_group_disabled` on a service disables queue subscriptions for all
+  grouped endpoints in that generated service.
+- `queue_group_disabled` on an endpoint disables queue subscriptions just for
+  that endpoint.
+- `pending_msg_limit` and `pending_bytes_limit` map to
+  `micro.WithEndpointPendingLimits(...)`. NATS may close the subscription with
+  slow-consumer semantics if those buffers are exceeded.
+
 ### Skip Support
 
 Exclude services or endpoints from generation:
@@ -744,7 +790,7 @@ if orderv1.IsOrderServiceOrderExpired(err) {
 
 ```bash
 # Clone repository
-git clone https://github.com/toyz/protoc-gen-nats-micro
+git clone https://github.com/franchb/protoc-gen-nats-micro
 cd protoc-gen-nats-micro
 
 # Generate code
@@ -779,9 +825,9 @@ task --list
 
 Streaming RPC is supported across the generator today.
 
-- Use [Streaming RPC](docs/guide/streaming.md) for typed server-streaming, client-streaming, and bidi helpers over NATS.
-- Use [KV & Object Store](docs/guide/kv-object-store.md) when you want post-RPC persistence of whole protobuf messages.
-- Use `chunked_io` on streaming blob methods for generated download helpers (Go, TypeScript, Python) and upload helpers (Go only).
+- [Streaming RPC](docs/guide/streaming.md) provides typed server-streaming, client-streaming, and bidi helpers over NATS.
+- Persist whole protobuf messages with [KV & Object Store](docs/guide/kv-object-store.md) for post-RPC storage.
+- Enable `chunked_io` on streaming blob methods to generate download helpers (Go, TypeScript, Python) and upload helpers (Go only).
 
 For larger payload transfer, prefer a streaming RPC with a simple `bytes` chunk message instead of overloading `object_store`.
 

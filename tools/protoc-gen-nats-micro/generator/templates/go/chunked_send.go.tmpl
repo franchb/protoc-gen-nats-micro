@@ -12,7 +12,7 @@ package {{.File.GoPackageName}}
 
 // SendBytes sends a single payload chunk to the server.
 func (s *{{$svc.GoName}}_{{.GoName}}_ClientStream) SendBytes(data []byte) error {
-  return s.Send(&{{.Input.GoIdent.GoName}}{
+  return s.Send(&{{$.QualifiedGoIdent .Input.GoIdent}}{
     {{$endpointOpts.ChunkedIO.GoFieldName}}: data,
   })
 }

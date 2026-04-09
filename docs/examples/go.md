@@ -2,7 +2,7 @@
 
 ## Complex Service (Interceptors, Headers, Multi-Version)
 
-[Source code →](https://github.com/Toyz/protoc-gen-nats-micro/tree/main/examples/complex-go)
+[Source code →](https://github.com/franchb/protoc-gen-nats-micro/tree/main/examples/complex-go)
 
 Demonstrates multiple services with interceptors, headers, and API versioning:
 
@@ -19,7 +19,7 @@ go run client.go    # run client demo
 
 ## KV Store & Object Store
 
-[Source code →](https://github.com/Toyz/protoc-gen-nats-micro/tree/main/examples/kvstore-go)
+[Source code →](https://github.com/franchb/protoc-gen-nats-micro/tree/main/examples/kvstore-go)
 
 Demonstrates auto-persistence of RPC responses to NATS KV and Object stores:
 
@@ -36,7 +36,7 @@ go run cmd/client/client.go    # run client demo
 
 ## Streaming RPC
 
-[Source code →](https://github.com/Toyz/protoc-gen-nats-micro/tree/main/examples/streaming-go)
+[Source code →](https://github.com/franchb/protoc-gen-nats-micro/tree/main/examples/streaming-go)
 
 Demonstrates all four RPC patterns:
 
