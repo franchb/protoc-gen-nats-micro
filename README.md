@@ -3,6 +3,8 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/franchb/protoc-gen-nats-micro)](https://github.com/franchb/protoc-gen-nats-micro)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> **Fork of [Toyz/protoc-gen-nats-micro](https://github.com/Toyz/protoc-gen-nats-micro)** — experimental, always a step ahead. PRs are backported to upstream.
+
 A Protocol Buffers compiler plugin that generates type-safe NATS microservice code using the official `nats.io/micro` framework.
 
 ## Overview
@@ -12,6 +14,27 @@ Write standard `.proto` files, run `buf generate`, get production-ready NATS mic
 **This plugin generates:** NATS microservice code (server interfaces, clients, error handling)
 
 **Demo project also includes:** gRPC, REST gateway, and OpenAPI generation to demonstrate interoperability - these are optional and not required for NATS services.
+
+## Fork Status
+
+This is an experimental fork of [Toyz/protoc-gen-nats-micro](https://github.com/Toyz/protoc-gen-nats-micro). I backport PRs from this repo to the upstream, but this fork will always be a step ahead — unless upstream catches up enough for my needs.
+
+**What this fork adds over upstream:**
+
+- **Multi-language codegen** — TypeScript (Node.js), Python (asyncio), Web-TypeScript (browser via `@bufbuild/protobuf`)
+- **Server-streaming RPCs** across all supported languages
+- **Client-streaming RPCs** across all supported languages
+- **Bidirectional streaming RPCs** with header-based sequencing and flow control
+- **Chunked I/O helpers** — `io.Reader`/`io.Writer` wrappers for streaming large payloads (Go, TypeScript, Python)
+- **JetStream KV Store integration** — auto-persist RPC responses with write modes (last-write-wins, compare-and-set, create-only), TTL, compression
+- **JetStream Object Store integration** — large payload storage with auto-persist and TTL
+- **Backpressure controls** — per-endpoint pending message/byte limits, per-endpoint and per-service queue-group disable
+- **API versioning** — subject prefix isolation for running multiple versions simultaneously
+- **Custom error codes** — define application-specific error codes in proto, get typed constructors and checkers
+- **Client and server interceptors** — middleware with bidirectional header propagation
+- **Package-level shared types** — one shared file per proto package eliminates duplication
+- **Comprehensive documentation** — VitePress docs site with guides for streaming, KV/Object Store, interceptors, error handling
+- **Signed binary releases** (planned)
 
 ## Motivation
 
@@ -62,6 +85,8 @@ Existing NATS code generation tools like [nRPC](https://github.com/nats-rpc/nrpc
 ```bash
 go install github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro@latest
 ```
+
+Signed binary releases are also available on the [Releases page](https://github.com/franchb/protoc-gen-nats-micro/releases).
 
 ### Vendored Proto Options
 
