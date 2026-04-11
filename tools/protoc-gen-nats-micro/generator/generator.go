@@ -130,8 +130,6 @@ func ToSnakeCase(s string) string {
 					// End of acronym before lowercase: "HTTPSe" → "http_se"
 					result.WriteByte('_')
 				}
-			} else if r >= '0' && r <= '9' && prev >= 'a' && prev <= 'z' {
-				// lowercase → digit: "Order2" → kept as-is (no separator needed, handled by context)
 			}
 		}
 		result.WriteRune(r)
