@@ -54,6 +54,7 @@ dist/
 build/
 
 # Build output
+protoc-gen-nats-micro
 tools/protoc-gen-nats-micro/protoc-gen-nats-micro
 tools/protoc-gen-nats-micro/protoc-gen-nats-micro.exe
 

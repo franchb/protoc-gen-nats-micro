@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: tools/protoc-gen-nats-micro
+
+  test:
+    name: Test (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["stable", "oldstable"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Build root module
+        run: go build ./...
+
+      - name: Run tests with coverage
+        working-directory: tools/protoc-gen-nats-micro
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: tools/protoc-gen-nats-micro/coverage.out
+          flags: go-${{ matrix.go-version }}
+          token: ${{ secrets.CODECOV_TOKEN || '' }}
