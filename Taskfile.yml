@@ -18,8 +18,6 @@ tasks:
     dir: extensions/proto
     cmds:
       - buf generate --template buf.gen.yaml --path natsmicro/options.proto
-      # The plugin imports from tools/.../nats/micro, so sync the generated file there too
-      - cp ../../gen/nats/micro/options.pb.go ../../tools/protoc-gen-nats-micro/nats/micro/options.pb.go
     sources:
       - extensions/proto/natsmicro/options.proto
       - extensions/proto/buf.yaml
@@ -27,7 +25,6 @@ tasks:
       - buf.gen.yaml
     generates:
       - gen/nats/micro/options.pb.go
-      - tools/protoc-gen-nats-micro/nats/micro/options.pb.go
 
   # Phase 2: Build the protoc plugin
   build:plugin:

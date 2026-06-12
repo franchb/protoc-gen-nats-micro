@@ -7,12 +7,14 @@ from typing import Dict, List, Optional, Callable, Awaitable, Tuple, Protocol, A
 from dataclasses import dataclass, field
 import asyncio
 import json
+import logging
 import nats
 from nats import micro
+from nats.js.errors import KeyWrongLastSequenceError
 from google.protobuf.json_format import Parse, MessageToJson
 
 # Import protobuf messages
-from {{.File.Proto.GetPackage}} import {{ProtoBasename .File.Proto.GetName}}_pb2 as pb
+from . import {{ProtoBasename .File.Proto.GetName}}_pb2 as pb
 
 # Import shared types
 from .shared_nats_pb2 import (
@@ -41,8 +43,10 @@ from .shared_nats_pb2 import (
     with_metadata,
     with_additional_metadata,
     with_server_interceptor,
+    with_jetstream,
     with_client_subject_prefix,
     with_client_interceptor,
+    with_client_jetstream,
     _WithSubjectPrefix,
     _WithName,
     _WithVersion,
@@ -51,6 +55,8 @@ from .shared_nats_pb2 import (
     _WithMetadata,
     _WithAdditionalMetadata,
     _WithServerInterceptor,
+    _WithJetStream,
     _WithClientSubjectPrefix,
     _WithClientInterceptor,
+    _WithClientJetStream,
 )

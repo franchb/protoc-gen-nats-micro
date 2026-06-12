@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -879,7 +879,7 @@ func findGeneratedGoFile(t *testing.T, fileContents map[string]string, suffix st
 		if suffix == "_chunked_nats.pb.go" && strings.HasSuffix(name, "_chunked_protoopaque_nats.pb.go") {
 			continue
 		}
-			return content
+		return content
 	}
 
 	t.Fatalf("failed to find generated Go file with suffix %q", suffix)

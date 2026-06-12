@@ -10,22 +10,14 @@ import (
 // GenerateFile generates NATS microservice code for a protobuf file.
 // The Language must be resolved by the caller (main.go).
 func GenerateFile(gen *protogen.Plugin, file *protogen.File, lang Language) error {
-	if len(file.Services) == 0 {
+	// Skip files with no generatable services entirely — emitting just the
+	// header would produce a file full of unused imports.
+	if !HasGeneratableServices(file) {
 		return nil
 	}
 
-	// Only Go-like languages use Go import paths
-	var importPath protogen.GoImportPath
-	if lang.IsGoLike() {
-		importPath = file.GoImportPath
-	}
-
-	// Go-like: use GeneratedFilenamePrefix (derived from go_package)
-	// Others: use the proto source path (e.g., "auth/v1/auth.proto" -> "auth/v1/auth")
-	filenamePrefix := file.GeneratedFilenamePrefix
-	if !lang.IsGoLike() {
-		filenamePrefix = strings.TrimSuffix(file.Proto.GetName(), ".proto")
-	}
+	importPath := ImportPathFor(file, lang)
+	filenamePrefix := OutputFilenamePrefix(file, lang)
 	filename := filenamePrefix + lang.FileExtension()
 	g := gen.NewGeneratedFile(filename, importPath)
 
@@ -43,6 +35,10 @@ func GenerateFile(gen *protogen.Plugin, file *protogen.File, lang Language) erro
 			continue
 		}
 
+		if err := ValidateServiceOptions(lang, opts); err != nil {
+			return fmt.Errorf("service %s: %w", service.GoName, err)
+		}
+
 		for _, method := range service.Methods {
 			methodOpts := GetEndpointOptions(method)
 			if methodOpts.Skip {
@@ -58,14 +54,43 @@ func GenerateFile(gen *protogen.Plugin, file *protogen.File, lang Language) erro
 		}
 	}
 
-	// Generate build-tagged chunked send helper files for Go.
-	if lang.IsGoLike() && hasClientStreamingChunkedIO(file) {
-		if err := generateChunkedSendFiles(gen, file, lang, filenamePrefix, importPath); err != nil {
-			return fmt.Errorf("generate chunked send files: %w", err)
-		}
+	// Language-specific extra per-file outputs (e.g., Go chunked send helpers).
+	if err := lang.GenerateExtraFiles(gen, file, filenamePrefix, importPath); err != nil {
+		return fmt.Errorf("generate extra files: %w", err)
 	}
 
 	return nil
+}
+
+// HasGeneratableServices reports whether the file contains at least one
+// service that is not marked skip.
+func HasGeneratableServices(file *protogen.File) bool {
+	for _, service := range file.Services {
+		if !GetServiceOptions(service).Skip {
+			return true
+		}
+	}
+	return false
+}
+
+// OutputFilenamePrefix returns the per-file output path prefix (without
+// extension): Go-like languages use the go_package-derived
+// GeneratedFilenamePrefix; others mirror the proto source path
+// (e.g., "auth/v1/auth.proto" -> "auth/v1/auth").
+func OutputFilenamePrefix(file *protogen.File, lang Language) string {
+	if lang.IsGoLike() {
+		return file.GeneratedFilenamePrefix
+	}
+	return strings.TrimSuffix(file.Proto.GetName(), ".proto")
+}
+
+// ImportPathFor returns the Go import path for generated files; empty for
+// non-Go languages, which resolve output paths from the proto source instead.
+func ImportPathFor(file *protogen.File, lang Language) protogen.GoImportPath {
+	if lang.IsGoLike() {
+		return file.GoImportPath
+	}
+	return ""
 }
 
 // hasClientStreamingChunkedIO reports whether any method in file is a
@@ -83,32 +108,6 @@ func hasClientStreamingChunkedIO(file *protogen.File) bool {
 		}
 	}
 	return false
-}
-
-// generateChunkedSendFiles emits two build-tagged files containing the
-// chunked upload helpers (SendBytes, SendReader, SendFile):
-//   - *_chunked_nats.pb.go        — open-struct mode  (//go:build !protoopaque)
-//   - *_chunked_protoopaque_nats.pb.go — opaque mode  (//go:build protoopaque)
-func generateChunkedSendFiles(gen *protogen.Plugin, file *protogen.File, lang Language, prefix string, importPath protogen.GoImportPath) error {
-	type tmplEntry struct {
-		suffix   string
-		template string
-	}
-	entries := []tmplEntry{
-		{"_chunked_nats.pb.go", "chunked_send.go.tmpl"},
-		{"_chunked_protoopaque_nats.pb.go", "chunked_send_opaque.go.tmpl"},
-	}
-	goLang, ok := lang.(*GoLanguage)
-	if !ok {
-		return nil
-	}
-	for _, e := range entries {
-		g := gen.NewGeneratedFile(prefix+e.suffix, importPath)
-		if err := goLang.executeFileTemplate(g, file, e.template); err != nil {
-			return fmt.Errorf("execute %s: %w", e.template, err)
-		}
-	}
-	return nil
 }
 
 // ToSnakeCase converts CamelCase to snake_case, handling acronyms correctly.

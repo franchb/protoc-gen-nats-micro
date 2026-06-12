@@ -155,8 +155,8 @@ The generated handler code automatically checks for these interfaces, so any err
 
 Errors are transmitted using standard NATS micro error headers:
 
-| Header        | Value                      |
-| ------------- | -------------------------- |
-| `Status`      | Error code (e.g., `"404"`) |
-| `Description` | Human-readable message     |
-| Body          | Optional binary error data |
+| Header                    | Value                                  |
+| ------------------------- | -------------------------------------- |
+| `Nats-Service-Error-Code` | Error code (e.g., `"ORDER_EXPIRED"`)   |
+| `Nats-Service-Error`      | Human-readable message                 |
+| Body                      | Optional binary error data             |

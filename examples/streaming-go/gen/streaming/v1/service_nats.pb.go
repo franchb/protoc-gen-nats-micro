@@ -193,7 +193,7 @@ func RegisterStreamDemoServiceHandlers(nc *nats.Conn, impl StreamDemoServiceNats
 		version:       "1.0.0",
 		description:   "Demonstrates server, client, and bidi streaming RPCs",
 		subjectPrefix: "api.v1.stream",
-		timeout:       0 * time.Second, // Service-level timeout (0 = no timeout)
+		timeout:       0, // Service-level timeout (0 = no timeout)
 		metadata:      map[string]string{},
 	}
 	for _, opt := range opts {
@@ -335,6 +335,71 @@ type streamDemoServiceHandlers struct {
 	js             jetstream.JetStream    // Optional JetStream context for KV/ObjectStore
 }
 
+type streamDemoServiceKVWriteMode int
+
+const (
+	streamDemoServiceKVWriteModeLastWriteWins streamDemoServiceKVWriteMode = iota + 1
+	streamDemoServiceKVWriteModeCompareAndSet
+	streamDemoServiceKVWriteModeCreateOnly
+)
+
+type streamDemoServiceKVPersistFailurePolicy int
+
+const (
+	streamDemoServiceKVPersistFailurePolicyBestEffort streamDemoServiceKVPersistFailurePolicy = iota + 1
+	streamDemoServiceKVPersistFailurePolicyRequired
+)
+
+func putStreamDemoServiceKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode streamDemoServiceKVWriteMode, keyTTL time.Duration) error {
+	create := func() error {
+		if keyTTL > 0 {
+			_, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
+			return err
+		}
+		_, err := kv.Create(ctx, key, data)
+		return err
+	}
+
+	switch mode {
+	case streamDemoServiceKVWriteModeCreateOnly:
+		return create()
+	case streamDemoServiceKVWriteModeCompareAndSet:
+		if err := create(); err == nil {
+			return nil
+		} else if !errors.Is(err, jetstream.ErrKeyExists) {
+			return err
+		}
+
+		entry, err := kv.Get(ctx, key)
+		if err != nil {
+			if errors.Is(err, jetstream.ErrKeyNotFound) {
+				return create()
+			}
+			return err
+		}
+
+		_, err = kv.Update(ctx, key, data, entry.Revision())
+		return err
+	case streamDemoServiceKVWriteModeLastWriteWins:
+		// Without a per-key TTL a plain Put already implements last-write-wins;
+		// the create-first dance is only needed to attach the TTL on first write.
+		if keyTTL == 0 {
+			_, err := kv.Put(ctx, key, data)
+			return err
+		}
+		if err := create(); err == nil {
+			return nil
+		} else if !errors.Is(err, jetstream.ErrKeyExists) {
+			return err
+		}
+		_, err := kv.Put(ctx, key, data)
+		return err
+	default:
+		_, err := kv.Put(ctx, key, data)
+		return err
+	}
+}
+
 func (h *streamDemoServiceHandlers) Ping(req micro.Request) {
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	// If endpoint timeout is set (> 0), use it; otherwise use service timeout
@@ -462,195 +527,210 @@ func (h *streamDemoServiceHandlers) Ping(req micro.Request) {
 // CountUp handles server-side streaming RPC.
 // Client sends a single request; server streams back multiple responses.
 func (h *streamDemoServiceHandlers) CountUp(req micro.Request) {
-	// Determine effective timeout: endpoint-specific timeout overrides service timeout
-	timeout := h.serviceTimeout
+	// Run the stream in its own goroutine so this subscription callback returns
+	// immediately: NATS dispatches messages to a subscription serially, so a
+	// long-lived stream would otherwise block every other request on this endpoint.
+	go func() {
+		// Determine effective timeout: endpoint-specific timeout overrides service timeout
+		timeout := h.serviceTimeout
 
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		if timeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
 
-	if req.Headers() != nil {
-		ctx = WithIncomingHeaders(ctx, req.Headers())
-	}
+		if req.Headers() != nil {
+			ctx = WithIncomingHeaders(ctx, req.Headers())
+		}
 
-	var msg CountUpRequest
-	if h.useJSON {
-		if err := protojson.Unmarshal(req.Data(), &msg); err != nil {
-			req.Error(StreamDemoServiceErrCodeInvalidArgument, fmt.Sprintf("failed to decode request: %v", err), nil)
+		var msg CountUpRequest
+		if h.useJSON {
+			if err := protojson.Unmarshal(req.Data(), &msg); err != nil {
+				req.Error(StreamDemoServiceErrCodeInvalidArgument, fmt.Sprintf("failed to decode request: %v", err), nil)
+				return
+			}
+		} else {
+			if err := proto.Unmarshal(req.Data(), &msg); err != nil {
+				req.Error(StreamDemoServiceErrCodeInvalidArgument, fmt.Sprintf("failed to decode request: %v", err), nil)
+				return
+			}
+		}
+
+		// Get the client's reply subject from the NATS request
+		var replySubject string
+		if req.Headers() != nil {
+			replySubject = req.Headers().Get("Reply-To")
+		}
+		if replySubject == "" {
+			// Fall back to using the NATS request reply subject
+			// We need to signal to the client that we're starting a stream
+			// First, acknowledge the request by responding with the stream inbox
+			inbox := nats.NewInbox()
+			replySubject = inbox
+			ackHeader := nats.Header{}
+			ackHeader.Set(natsStreamInboxHeader, inbox)
+			req.Respond(nil, micro.WithHeaders(micro.Headers(ackHeader)))
+		}
+
+		sender := newServerStreamSender(h.nc, replySubject)
+		stream := &StreamDemoService_CountUp_Stream{
+			sender:  sender,
+			useJSON: h.useJSON,
+		}
+
+		if err := h.impl.CountUp(ctx, &msg, stream); err != nil {
+			sender.CloseWithError(StreamDemoServiceErrCodeInternal, err.Error())
 			return
 		}
-	} else {
-		if err := proto.Unmarshal(req.Data(), &msg); err != nil {
-			req.Error(StreamDemoServiceErrCodeInvalidArgument, fmt.Sprintf("failed to decode request: %v", err), nil)
-			return
-		}
-	}
-
-	// Get the client's reply subject from the NATS request
-	var replySubject string
-	if req.Headers() != nil {
-		replySubject = req.Headers().Get("Reply-To")
-	}
-	if replySubject == "" {
-		// Fall back to using the NATS request reply subject
-		// We need to signal to the client that we're starting a stream
-		// First, acknowledge the request by responding with the stream inbox
-		inbox := nats.NewInbox()
-		replySubject = inbox
-		ackHeader := nats.Header{}
-		ackHeader.Set(natsStreamInboxHeader, inbox)
-		req.Respond(nil, micro.WithHeaders(micro.Headers(ackHeader)))
-	}
-
-	sender := newServerStreamSender(h.nc, replySubject)
-	stream := &StreamDemoService_CountUp_Stream{
-		sender:  sender,
-		useJSON: h.useJSON,
-	}
-
-	if err := h.impl.CountUp(ctx, &msg, stream); err != nil {
-		sender.CloseWithError(StreamDemoServiceErrCodeInternal, err.Error())
-		return
-	}
-	sender.Close()
+		sender.Close()
+	}()
 }
 
 // Sum handles client-side streaming RPC.
 // Client streams multiple requests; server responds once.
 func (h *streamDemoServiceHandlers) Sum(req micro.Request) {
-	// Determine effective timeout: endpoint-specific timeout overrides service timeout
-	timeout := h.serviceTimeout
+	// Run the stream in its own goroutine so this subscription callback returns
+	// immediately: NATS dispatches messages to a subscription serially, so a
+	// long-lived stream would otherwise block every other request on this endpoint.
+	go func() {
+		// Determine effective timeout: endpoint-specific timeout overrides service timeout
+		timeout := h.serviceTimeout
 
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		if timeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
 
-	if req.Headers() != nil {
-		ctx = WithIncomingHeaders(ctx, req.Headers())
-	}
+		if req.Headers() != nil {
+			ctx = WithIncomingHeaders(ctx, req.Headers())
+		}
 
-	// Create an inbox for receiving the client's stream messages
-	inbox := nats.NewInbox()
-	receiver, err := newClientStreamReceiver(h.nc, inbox, false)
-	if err != nil {
-		req.Error(StreamDemoServiceErrCodeInternal, fmt.Sprintf("failed to setup stream: %v", err), nil)
-		return
-	}
-	defer receiver.Close()
+		// Create an inbox for receiving the client's stream messages
+		inbox := nats.NewInbox()
+		receiver, err := newClientStreamReceiver(h.nc, inbox, false)
+		if err != nil {
+			req.Error(StreamDemoServiceErrCodeInternal, fmt.Sprintf("failed to setup stream: %v", err), nil)
+			return
+		}
+		defer receiver.Close()
 
-	// Tell the client where to send stream messages
-	ackHeader := nats.Header{}
-	ackHeader.Set(natsStreamInboxHeader, inbox)
-	req.Respond(nil, micro.WithHeaders(micro.Headers(ackHeader)))
+		// Tell the client where to send stream messages
+		ackHeader := nats.Header{}
+		ackHeader.Set(natsStreamInboxHeader, inbox)
+		req.Respond(nil, micro.WithHeaders(micro.Headers(ackHeader)))
 
-	stream := &StreamDemoService_Sum_Stream{
-		receiver: receiver,
-		useJSON:  h.useJSON,
-	}
+		stream := &StreamDemoService_Sum_Stream{
+			receiver: receiver,
+			useJSON:  h.useJSON,
+		}
 
-	resp, err := h.impl.Sum(ctx, stream)
-	if err != nil {
-		// Ack was already sent, so we can't use req.Error().
-		// Publish the error back to the client's Reply-To inbox using the stream
-		// error protocol, so the client doesn't hang waiting for a response.
-		fmt.Fprintf(os.Stderr, "[nats-micro] ERROR: Sum client stream handler failed: %v\n", err)
+		resp, err := h.impl.Sum(ctx, stream)
+		if err != nil {
+			// Ack was already sent, so we can't use req.Error().
+			// Publish the error back to the client's Reply-To inbox using the stream
+			// error protocol, so the client doesn't hang waiting for a response.
+			fmt.Fprintf(os.Stderr, "[nats-micro] ERROR: Sum client stream handler failed: %v\n", err)
+			var replySubject string
+			if req.Headers() != nil {
+				replySubject = req.Headers().Get("Reply-To")
+			}
+			if replySubject != "" {
+				errMsg := &nats.Msg{
+					Subject: replySubject,
+					Header:  nats.Header{},
+				}
+				errMsg.Header.Set("Nats-Service-Error-Code", StreamDemoServiceErrCodeInternal)
+				errMsg.Header.Set("Nats-Service-Error", err.Error())
+				h.nc.PublishMsg(errMsg)
+			}
+			return
+		}
+
+		// Send final response back via the original reply subject
+		var data []byte
+		if h.useJSON {
+			data, err = protojson.Marshal(resp)
+		} else {
+			data, err = proto.Marshal(resp)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[nats-micro] ERROR: failed to marshal Sum response: %v\n", err)
+			return
+		}
+
+		// Publish the final response to the client's reply inbox
+		// The client will have subscribed for the reply
 		var replySubject string
 		if req.Headers() != nil {
 			replySubject = req.Headers().Get("Reply-To")
 		}
 		if replySubject != "" {
-			errMsg := &nats.Msg{
-				Subject: replySubject,
-				Header:  nats.Header{},
-			}
-			errMsg.Header.Set("Nats-Service-Error-Code", StreamDemoServiceErrCodeInternal)
-			errMsg.Header.Set("Nats-Service-Error", err.Error())
-			h.nc.PublishMsg(errMsg)
+			h.nc.Publish(replySubject, data)
 		}
-		return
-	}
-
-	// Send final response back via the original reply subject
-	var data []byte
-	if h.useJSON {
-		data, err = protojson.Marshal(resp)
-	} else {
-		data, err = proto.Marshal(resp)
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[nats-micro] ERROR: failed to marshal Sum response: %v\n", err)
-		return
-	}
-
-	// Publish the final response to the client's reply inbox
-	// The client will have subscribed for the reply
-	var replySubject string
-	if req.Headers() != nil {
-		replySubject = req.Headers().Get("Reply-To")
-	}
-	if replySubject != "" {
-		h.nc.Publish(replySubject, data)
-	}
+	}()
 }
 
 // Chat handles bidirectional streaming RPC.
 // Both client and server can send and receive messages concurrently.
 func (h *streamDemoServiceHandlers) Chat(req micro.Request) {
-	// Determine effective timeout: endpoint-specific timeout overrides service timeout
-	timeout := h.serviceTimeout
+	// Run the stream in its own goroutine so this subscription callback returns
+	// immediately: NATS dispatches messages to a subscription serially, so a
+	// long-lived stream would otherwise block every other request on this endpoint.
+	go func() {
+		// Determine effective timeout: endpoint-specific timeout overrides service timeout
+		timeout := h.serviceTimeout
 
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		if timeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, timeout)
+			defer cancel()
+		}
 
-	if req.Headers() != nil {
-		ctx = WithIncomingHeaders(ctx, req.Headers())
-	}
+		if req.Headers() != nil {
+			ctx = WithIncomingHeaders(ctx, req.Headers())
+		}
 
-	// Create inbox for receiving client stream messages
-	serverInbox := nats.NewInbox()
-	receiver, err := newClientStreamReceiver(h.nc, serverInbox, false)
-	if err != nil {
-		req.Error(StreamDemoServiceErrCodeInternal, fmt.Sprintf("failed to setup stream: %v", err), nil)
-		return
-	}
-	defer receiver.Close()
+		// Create inbox for receiving client stream messages
+		serverInbox := nats.NewInbox()
+		receiver, err := newClientStreamReceiver(h.nc, serverInbox, false)
+		if err != nil {
+			req.Error(StreamDemoServiceErrCodeInternal, fmt.Sprintf("failed to setup stream: %v", err), nil)
+			return
+		}
+		defer receiver.Close()
 
-	// Get/create the reply subject for server→client messages
-	var clientInbox string
-	if req.Headers() != nil {
-		clientInbox = req.Headers().Get("Reply-To")
-	}
-	if clientInbox == "" {
-		clientInbox = nats.NewInbox()
-	}
+		// Get/create the reply subject for server→client messages
+		var clientInbox string
+		if req.Headers() != nil {
+			clientInbox = req.Headers().Get("Reply-To")
+		}
+		if clientInbox == "" {
+			clientInbox = nats.NewInbox()
+		}
 
-	// Tell the client where to send its stream messages and where we'll send ours
-	ackHeader := nats.Header{}
-	ackHeader.Set(natsStreamInboxHeader, serverInbox)
-	req.Respond(nil, micro.WithHeaders(micro.Headers(ackHeader)))
+		// Tell the client where to send its stream messages and where we'll send ours
+		ackHeader := nats.Header{}
+		ackHeader.Set(natsStreamInboxHeader, serverInbox)
+		req.Respond(nil, micro.WithHeaders(micro.Headers(ackHeader)))
 
-	sender := newServerStreamSender(h.nc, clientInbox)
-	stream := &StreamDemoService_Chat_Stream{
-		sender:   sender,
-		receiver: receiver,
-		useJSON:  h.useJSON,
-	}
+		sender := newServerStreamSender(h.nc, clientInbox)
+		stream := &StreamDemoService_Chat_Stream{
+			sender:   sender,
+			receiver: receiver,
+			useJSON:  h.useJSON,
+		}
 
-	if err := h.impl.Chat(ctx, stream); err != nil {
-		sender.CloseWithError(StreamDemoServiceErrCodeInternal, err.Error())
-		return
-	}
-	sender.Close()
+		if err := h.impl.Chat(ctx, stream); err != nil {
+			sender.CloseWithError(StreamDemoServiceErrCodeInternal, err.Error())
+			return
+		}
+		sender.Close()
+	}()
 }
 
 // StreamDemoService_CountUp_Stream is the server-side stream for CountUp.
@@ -764,6 +844,56 @@ type StreamDemoServiceNatsClient struct {
 	useJSON       bool                   // Use JSON encoding instead of binary protobuf
 	interceptor   UnaryClientInterceptor // Chained interceptors
 	js            jetstream.JetStream    // Optional JetStream for KV/ObjectStore reads
+}
+
+func putStreamDemoServiceClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode streamDemoServiceKVWriteMode, keyTTL time.Duration) error {
+	create := func() error {
+		if keyTTL > 0 {
+			_, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
+			return err
+		}
+		_, err := kv.Create(ctx, key, data)
+		return err
+	}
+
+	switch mode {
+	case streamDemoServiceKVWriteModeCreateOnly:
+		return create()
+	case streamDemoServiceKVWriteModeCompareAndSet:
+		if err := create(); err == nil {
+			return nil
+		} else if !errors.Is(err, jetstream.ErrKeyExists) {
+			return err
+		}
+
+		entry, err := kv.Get(ctx, key)
+		if err != nil {
+			if errors.Is(err, jetstream.ErrKeyNotFound) {
+				return create()
+			}
+			return err
+		}
+
+		_, err = kv.Update(ctx, key, data, entry.Revision())
+		return err
+	case streamDemoServiceKVWriteModeLastWriteWins:
+		// Without a per-key TTL a plain Put already implements last-write-wins;
+		// the create-first dance is only needed to attach the TTL on first write.
+		if keyTTL == 0 {
+			_, err := kv.Put(ctx, key, data)
+			return err
+		}
+		if err := create(); err == nil {
+			return nil
+		} else if !errors.Is(err, jetstream.ErrKeyExists) {
+			return err
+		}
+		_, err := kv.Put(ctx, key, data)
+		return err
+	default:
+		_, err := kv.Put(ctx, key, data)
+		return err
+	}
 }
 
 // NewStreamDemoServiceNatsClient creates a new NATS client for StreamDemoService.
@@ -971,12 +1101,13 @@ func (c *StreamDemoServiceNatsClient) CountUp(ctx context.Context, req *CountUpR
 
 // StreamDemoService_Sum_ClientStream is the client-side sender stream for Sum.
 type StreamDemoService_Sum_ClientStream struct {
-	nc      *nats.Conn
-	sendTo  string // Server's inbox
-	replyTo string // Our inbox for final response
-	useJSON bool
-	seq     int
-	mu      sync.Mutex
+	nc       *nats.Conn
+	sendTo   string             // Server's inbox
+	replyTo  string             // Our inbox for final response
+	replySub *nats.Subscription // Subscription on replyTo, created before the handshake
+	useJSON  bool
+	seq      int
+	mu       sync.Mutex
 }
 
 // Send sends a message to the server.
@@ -1005,7 +1136,10 @@ func (s *StreamDemoService_Sum_ClientStream) Send(msg *SumRequest) error {
 }
 
 // CloseAndRecv signals end of client messages and waits for the server's response.
+// The stream's reply subscription is released before returning, on every path.
 func (s *StreamDemoService_Sum_ClientStream) CloseAndRecv(ctx context.Context) (*SumResponse, error) {
+	defer s.Close()
+
 	// Send end-of-stream marker
 	m := &nats.Msg{
 		Subject: s.sendTo,
@@ -1016,14 +1150,10 @@ func (s *StreamDemoService_Sum_ClientStream) CloseAndRecv(ctx context.Context) (
 		return nil, fmt.Errorf("failed to close send: %w", err)
 	}
 
-	// Wait for final response on our reply inbox
-	sub, err := s.nc.SubscribeSync(s.replyTo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe for response: %w", err)
-	}
-	defer sub.Unsubscribe()
-
-	natsMsg, err := sub.NextMsgWithContext(ctx)
+	// Wait for the final response on the reply subscription that was opened
+	// before the handshake, so a fast (or mid-stream error) response published
+	// by the server is buffered rather than lost.
+	natsMsg, err := s.replySub.NextMsgWithContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to receive response: %w", err)
 	}
@@ -1049,12 +1179,28 @@ func (s *StreamDemoService_Sum_ClientStream) CloseAndRecv(ctx context.Context) (
 	return &resp, nil
 }
 
+// Close releases the stream's reply subscription without waiting for a
+// server response. It is safe to call multiple times and after CloseAndRecv.
+func (s *StreamDemoService_Sum_ClientStream) Close() error {
+	if s.replySub == nil || !s.replySub.IsValid() {
+		return nil
+	}
+	return s.replySub.Unsubscribe()
+}
+
 // Sum initiates a client-streaming RPC call.
 func (c *StreamDemoServiceNatsClient) Sum(ctx context.Context) (*StreamDemoService_Sum_ClientStream, error) {
 	subject := c.subjectPrefix + ".sum"
 
-	// Create inbox for receiving the final response
+	// Create inbox for receiving the final response and subscribe to it BEFORE
+	// the handshake: core NATS drops messages published to subjects without
+	// subscribers, so subscribing only in CloseAndRecv would lose a fast final
+	// response or a mid-stream error published by the server.
 	replyInbox := nats.NewInbox()
+	replySub, err := c.nc.SubscribeSync(replyInbox)
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe for response: %w", err)
+	}
 
 	// Send initial handshake to get server's inbox
 	msg := &nats.Msg{
@@ -1065,19 +1211,22 @@ func (c *StreamDemoServiceNatsClient) Sum(ctx context.Context) (*StreamDemoServi
 
 	ackMsg, err := c.nc.RequestMsgWithContext(ctx, msg)
 	if err != nil {
+		replySub.Unsubscribe()
 		return nil, fmt.Errorf("failed to initiate client stream: %w", err)
 	}
 
 	serverInbox := ackMsg.Header.Get(natsStreamInboxHeader)
 	if serverInbox == "" {
+		replySub.Unsubscribe()
 		return nil, fmt.Errorf("server did not provide stream inbox")
 	}
 
 	return &StreamDemoService_Sum_ClientStream{
-		nc:      c.nc,
-		sendTo:  serverInbox,
-		replyTo: replyInbox,
-		useJSON: c.useJSON,
+		nc:       c.nc,
+		sendTo:   serverInbox,
+		replyTo:  replyInbox,
+		replySub: replySub,
+		useJSON:  c.useJSON,
 	}, nil
 }
 

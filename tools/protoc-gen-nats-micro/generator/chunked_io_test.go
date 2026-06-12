@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
@@ -594,9 +594,9 @@ func TestGenerateFileEmitsClientStreamingForPython(t *testing.T) {
 		"Nats-Stream-Inbox",
 		"Nats-Stream-Seq",
 		"Nats-Stream-End",
-		"async def sum(",      // client method
-		"stream_iter",         // server handler async generator
-		"client-streaming",    // docstring
+		"async def sum(",   // client method
+		"stream_iter",      // server handler async generator
+		"client-streaming", // docstring
 	}
 	for _, snippet := range expectedSnippets {
 		if !strings.Contains(pyFile, snippet) {
@@ -713,19 +713,7 @@ func buildTestFile(t *testing.T, messages []*descriptorpb.DescriptorProto, metho
 }
 
 func methodDescriptor(name, input, output string, clientStreaming, serverStreaming bool, chunked *natspb.ChunkedIOOptions) *descriptorpb.MethodDescriptorProto {
-	opts := &descriptorpb.MethodOptions{}
-	if chunked != nil {
-		proto.SetExtension(opts, natspb.E_ChunkedIo, chunked)
-	}
-
-	return &descriptorpb.MethodDescriptorProto{
-		Name:            proto.String(name),
-		InputType:       proto.String(".test.v1." + input),
-		OutputType:      proto.String(".test.v1." + output),
-		ClientStreaming: proto.Bool(clientStreaming),
-		ServerStreaming: proto.Bool(serverStreaming),
-		Options:         opts,
-	}
+	return methodDescriptorWithTypes(name, ".test.v1."+input, ".test.v1."+output, clientStreaming, serverStreaming, chunked)
 }
 
 func messageDescriptor(name string, fields ...*descriptorpb.FieldDescriptorProto) *descriptorpb.DescriptorProto {

@@ -2,9 +2,10 @@ package generator
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 
-	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -157,8 +158,47 @@ type ChunkedIOOpts struct {
 	DefaultChunkSize int32
 }
 
+// errorCodeRe matches the UPPER_SNAKE_CASE codes that can be turned into
+// valid Go/TypeScript/Python identifiers by the error templates.
+var errorCodeRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// ValidateServiceOptions rejects option values that would generate invalid
+// or non-interoperable code for the target language.
+func ValidateServiceOptions(lang Language, opts ServiceOptions) error {
+	if opts.UseJSON && !lang.SupportsJSON() {
+		return fmt.Errorf(
+			"the (nats.micro.service).json option is not supported for language %q: generated TypeScript always uses binary protobuf encoding, so a JSON-mode service would silently fail to interoperate",
+			lang.Name(),
+		)
+	}
+	for _, code := range opts.ErrorCodes {
+		if !errorCodeRe.MatchString(code) {
+			return fmt.Errorf(
+				"error code %q cannot be turned into a valid identifier: error codes must be UPPER_SNAKE_CASE ([A-Z][A-Z0-9_]*)",
+				code,
+			)
+		}
+	}
+	return nil
+}
+
+// endpointOptionsCache memoizes per-method option extraction: templates and
+// the generator pipeline re-evaluate GetEndpointOptions many times per method,
+// and each evaluation walks several proto extensions reflectively. The plugin
+// runs single-threaded, so no locking is needed.
+var endpointOptionsCache = map[*protogen.Method]EndpointOptions{}
+
 // GetEndpointOptions extracts endpoint options from proto method definition
 func GetEndpointOptions(method *protogen.Method) EndpointOptions {
+	if opts, ok := endpointOptionsCache[method]; ok {
+		return opts
+	}
+	opts := extractEndpointOptions(method)
+	endpointOptionsCache[method] = opts
+	return opts
+}
+
+func extractEndpointOptions(method *protogen.Method) EndpointOptions {
 	opts := EndpointOptions{
 		Skip:     false,
 		Timeout:  0, // 0 means use service default
@@ -256,7 +296,7 @@ func GetEndpointOptions(method *protogen.Method) EndpointOptions {
 			}
 		}
 		if goFieldName == "" {
-			goFieldName = fieldNameToGoGetter(chunkField) // fallback
+			goFieldName = ToCamelCase(chunkField) // fallback
 		}
 
 		opts.ChunkedIO = &ChunkedIOOpts{
@@ -292,10 +332,6 @@ func resolveKVPersistFailurePolicy(kvOpts *natspb.KVStoreOptions) KVPersistFailu
 	default:
 		return KVPersistFailurePolicyBestEffort
 	}
-}
-
-func IsKVWriteModeLastWriteWins(opts *KVStoreOpts) bool {
-	return opts != nil && opts.WriteMode == KVWriteModeLastWriteWins
 }
 
 func IsKVWriteModeCompareAndSet(opts *KVStoreOpts) bool {

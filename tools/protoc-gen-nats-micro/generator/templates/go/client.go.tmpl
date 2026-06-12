@@ -79,6 +79,12 @@ func put{{.Service.GoName}}ClientKVValue(ctx context.Context, kv jetstream.KeyVa
     _, err = kv.Update(ctx, key, data, entry.Revision())
     return err
   case {{$kvWriteModeLastWriteWins}}:
+    // Without a per-key TTL a plain Put already implements last-write-wins;
+    // the create-first dance is only needed to attach the TTL on first write.
+    if keyTTL == 0 {
+      _, err := kv.Put(ctx, key, data)
+      return err
+    }
     if err := create(); err == nil {
       return nil
     } else if !errors.Is(err, jetstream.ErrKeyExists) {
@@ -456,7 +462,7 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{
 
   // Create inbox for receiving streamed responses
   inbox := nats.NewInbox()
-  receiver, err := newClientStreamReceiver(c.nc, inbox, false)
+  receiver, err := newClientStreamReceiver(c.nc, inbox, {{if $endpointOpts.Stream}}{{$endpointOpts.Stream.Ordered}}{{else}}false{{end}})
   if err != nil {
     return nil, fmt.Errorf("failed to setup stream: %w", err)
   }
@@ -567,7 +573,7 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context) (*{{$.
 
   // Create inbox for receiving server responses
   clientInbox := nats.NewInbox()
-  receiver, err := newClientStreamReceiver(c.nc, clientInbox, false)
+  receiver, err := newClientStreamReceiver(c.nc, clientInbox, {{if $endpointOpts.Stream}}{{$endpointOpts.Stream.Ordered}}{{else}}false{{end}})
   if err != nil {
     return nil, fmt.Errorf("failed to setup stream: %w", err)
   }
@@ -607,6 +613,7 @@ type {{$.Service.GoName}}_{{.GoName}}_ClientStream struct {
   nc       *nats.Conn
   sendTo   string              // Server's inbox
   replyTo  string              // Our inbox for final response
+  replySub *nats.Subscription  // Subscription on replyTo, created before the handshake
   useJSON  bool
   seq      int
   mu       sync.Mutex
@@ -638,7 +645,10 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Send(msg *{{$.QualifiedG
 }
 
 // CloseAndRecv signals end of client messages and waits for the server's response.
+// The stream's reply subscription is released before returning, on every path.
 func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context.Context) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error) {
+  defer s.Close()
+
   // Send end-of-stream marker
   m := &nats.Msg{
     Subject: s.sendTo,
@@ -649,14 +659,10 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context
     return nil, fmt.Errorf("failed to close send: %w", err)
   }
 
-  // Wait for final response on our reply inbox
-  sub, err := s.nc.SubscribeSync(s.replyTo)
-  if err != nil {
-    return nil, fmt.Errorf("failed to subscribe for response: %w", err)
-  }
-  defer sub.Unsubscribe()
-
-  natsMsg, err := sub.NextMsgWithContext(ctx)
+  // Wait for the final response on the reply subscription that was opened
+  // before the handshake, so a fast (or mid-stream error) response published
+  // by the server is buffered rather than lost.
+  natsMsg, err := s.replySub.NextMsgWithContext(ctx)
   if err != nil {
     return nil, fmt.Errorf("failed to receive response: %w", err)
   }
@@ -680,6 +686,15 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) CloseAndRecv(ctx context
     }
   }
   return &resp, nil
+}
+
+// Close releases the stream's reply subscription without waiting for a
+// server response. It is safe to call multiple times and after CloseAndRecv.
+func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) Close() error {
+  if s.replySub == nil || !s.replySub.IsValid() {
+    return nil
+  }
+  return s.replySub.Unsubscribe()
 }
 
 {{- if $endpointOpts.ChunkedIO}}
@@ -725,8 +740,15 @@ func (s *{{$.Service.GoName}}_{{.GoName}}_ClientStream) SendFile(path string, ch
 func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context) (*{{$.Service.GoName}}_{{.GoName}}_ClientStream, error) {
   subject := c.subjectPrefix + ".{{ToSnakeCase .GoName}}"
 
-  // Create inbox for receiving the final response
+  // Create inbox for receiving the final response and subscribe to it BEFORE
+  // the handshake: core NATS drops messages published to subjects without
+  // subscribers, so subscribing only in CloseAndRecv would lose a fast final
+  // response or a mid-stream error published by the server.
   replyInbox := nats.NewInbox()
+  replySub, err := c.nc.SubscribeSync(replyInbox)
+  if err != nil {
+    return nil, fmt.Errorf("failed to subscribe for response: %w", err)
+  }
 
   // Send initial handshake to get server's inbox
   msg := &nats.Msg{
@@ -737,19 +759,22 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context) (*{{$.
 
   ackMsg, err := c.nc.RequestMsgWithContext(ctx, msg)
   if err != nil {
+    replySub.Unsubscribe()
     return nil, fmt.Errorf("failed to initiate client stream: %w", err)
   }
 
   serverInbox := ackMsg.Header.Get(natsStreamInboxHeader)
   if serverInbox == "" {
+    replySub.Unsubscribe()
     return nil, fmt.Errorf("server did not provide stream inbox")
   }
 
   return &{{$.Service.GoName}}_{{.GoName}}_ClientStream{
-    nc:      c.nc,
-    sendTo:  serverInbox,
-    replyTo: replyInbox,
-    useJSON: c.useJSON,
+    nc:       c.nc,
+    sendTo:   serverInbox,
+    replyTo:  replyInbox,
+    replySub: replySub,
+    useJSON:  c.useJSON,
   }, nil
 }
 {{- end}}

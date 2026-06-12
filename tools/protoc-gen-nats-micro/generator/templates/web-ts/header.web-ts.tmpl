@@ -3,11 +3,102 @@
 import type { NatsConnection, RequestOptions, MsgHdrs } from 'nats';
 import { headers } from 'nats';
 import { toBinary, fromBinary, create } from '@bufbuild/protobuf';
-{{- range .File.Services}}
-import * as pb from './{{ProtoBasename $.File.Proto.GetName}}_pb';
-{{- end}}
+import * as pb from './{{ProtoBasename .File.Proto.GetName}}_pb';
 import {
   type UnaryInvoker,
   type UnaryClientInterceptor,
   chainUnaryClientInterceptors,
 } from './shared_nats.pb';
+
+/**
+ * ClientStreamReceiver receives streamed messages from the server
+ */
+export class ClientStreamReceiver<T> {
+  private done = false;
+  private iter?: AsyncIterator<any>;
+
+  constructor(
+    private readonly sub: any,
+    private readonly decoder: (data: Uint8Array) => T,
+    private readonly chunkField: string = 'data'
+  ) {}
+
+  /**
+   * Receive the next message. Returns null on end-of-stream.
+   */
+  async recv(): Promise<T | null> {
+    if (this.done) return null;
+    if (!this.iter) {
+      this.iter = (this.sub as any)[Symbol.asyncIterator]();
+    }
+    const r = await this.iter.next();
+    if (r.done) {
+      this.done = true;
+      return null;
+    }
+    const msg = r.value;
+    if (msg.headers?.get('Nats-Stream-End') === 'true') {
+      const errorCode = msg.headers?.get('Nats-Service-Error-Code') || msg.headers?.get('Status');
+      if (errorCode) {
+        const desc = msg.headers?.get('Nats-Service-Error') || msg.headers?.get('Description') || 'Stream error';
+        throw new Error(`Stream error [${errorCode}]: ${desc}`);
+      }
+      this.done = true;
+      return null;
+    }
+    return this.decoder(msg.data);
+  }
+
+  /**
+   * Async iterator for receiving streamed messages
+   */
+  async *[Symbol.asyncIterator](): AsyncIterableIterator<T> {
+    while (true) {
+      const val = await this.recv();
+      if (val === null) break;
+      yield val;
+    }
+  }
+
+  /**
+   * Drain all stream chunks into a single Uint8Array.
+   * WARNING: entire payload is buffered in memory.
+   */
+  async recvBytes(field: string = this.chunkField): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    for await (const msg of this) {
+      const chunk = (msg as any)[field];
+      if (chunk) chunks.push(chunk);
+    }
+    const total = chunks.reduce((s, c) => s + c.length, 0);
+    const result = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      result.set(c, offset);
+      offset += c.length;
+    }
+    return result;
+  }
+
+  /**
+   * Stream chunks to a Web WritableStream.
+   */
+  async recvToStream(writable: WritableStream<Uint8Array>, field: string = this.chunkField): Promise<void> {
+    const writer = writable.getWriter();
+    try {
+      for await (const msg of this) {
+        const chunk = (msg as any)[field];
+        if (chunk) await writer.write(chunk);
+      }
+    } finally {
+      await writer.close();
+    }
+  }
+
+  /**
+   * Close the stream subscription
+   */
+  close(): void {
+    this.sub.unsubscribe();
+  }
+}

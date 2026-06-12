@@ -10,13 +10,27 @@ import (
 
 var keyTemplatePlaceholderRe = regexp.MustCompile(`\{(\w+)\}`)
 
-// ValidateKeyTemplate checks that every {field} placeholder in the template
-// refers to an actual field on the method's input message. Returns an error
-// with a clear message listing available fields if a placeholder is invalid.
+// keyTemplateLiteralRe limits literal (non-placeholder) template text to the
+// NATS KV key charset. Anything else (%, quotes, backticks, ${, stray braces)
+// would corrupt the generated Go/TS/Python key expressions.
+var keyTemplateLiteralRe = regexp.MustCompile(`^[A-Za-z0-9\-/_=.]*$`)
+
+// ValidateKeyTemplate checks that the template only contains characters safe
+// to splice into generated code, and that every {field} placeholder refers to
+// an actual field on the method's input message. Returns an error with a
+// clear message listing available fields if a placeholder is invalid.
 func ValidateKeyTemplate(template string, method *protogen.Method) error {
+	literal := keyTemplatePlaceholderRe.ReplaceAllString(template, "")
+	if !keyTemplateLiteralRe.MatchString(literal) {
+		return fmt.Errorf(
+			"key_template %q contains unsupported characters: only [A-Za-z0-9-/_=.] and {field} placeholders are allowed",
+			template,
+		)
+	}
+
 	matches := keyTemplatePlaceholderRe.FindAllStringSubmatch(template, -1)
 	if len(matches) == 0 {
-		return nil // No placeholders, nothing to validate
+		return nil // No placeholders, nothing else to validate
 	}
 
 	// Build a set of valid field names from the input message
@@ -61,8 +75,7 @@ func ResolveKeyTemplateGo(template string, method *protogen.Method) string {
 	var args []string
 	for _, m := range matches {
 		fieldName := m[1]
-		goFieldName := fieldNameToGoGetter(fieldName)
-		args = append(args, fmt.Sprintf("msg.Get%s()", goFieldName))
+		args = append(args, fmt.Sprintf("msg.Get%s()", goFieldNameFor(method, fieldName)))
 	}
 
 	return fmt.Sprintf("fmt.Sprintf(%q, %s)", format, strings.Join(args, ", "))
@@ -79,7 +92,7 @@ func ResolveKeyTemplateTS(template string, method *protogen.Method) string {
 	result := keyTemplatePlaceholderRe.ReplaceAllStringFunc(template, func(match string) string {
 		fieldName := match[1 : len(match)-1] // strip { }
 		tsFieldName := fieldNameToTSAccessor(fieldName)
-		return fmt.Sprintf("${req.%s}", tsFieldName)
+		return fmt.Sprintf("${request.%s}", tsFieldName)
 	})
 	return fmt.Sprintf("`%s`", result)
 }
@@ -99,25 +112,17 @@ func ResolveKeyTemplatePy(template string, method *protogen.Method) string {
 	return fmt.Sprintf("f\"%s\"", result)
 }
 
-// GetInputFields returns a list of field names from the method's input message type
-func GetInputFields(method *protogen.Method) []string {
-	var fields []string
+// goFieldNameFor resolves the Go field name from the protobuf descriptor so
+// generated getters match protoc-gen-go's GoCamelCase exactly (e.g., "id_2"
+// -> GetId_2). Falls back to naive conversion for names not present on the
+// input message (ValidateKeyTemplate normally rules that out).
+func goFieldNameFor(method *protogen.Method, fieldName string) string {
 	for _, f := range method.Input.Fields {
-		fields = append(fields, string(f.Desc.Name()))
-	}
-	return fields
-}
-
-// fieldNameToGoGetter converts a proto field name (snake_case) to a Go getter name
-// e.g., "user_id" -> "UserId", "id" -> "Id"
-func fieldNameToGoGetter(name string) string {
-	parts := strings.Split(name, "_")
-	for i, p := range parts {
-		if len(p) > 0 {
-			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		if string(f.Desc.Name()) == fieldName {
+			return f.GoName
 		}
 	}
-	return strings.Join(parts, "")
+	return ToCamelCase(fieldName)
 }
 
 // fieldNameToTSAccessor converts a proto field name to a TypeScript accessor

@@ -80,7 +80,7 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		version:       "{{.Options.Version}}",
 		description:   "{{.Options.Description}}",
 		subjectPrefix: "{{.Options.SubjectPrefix}}",
-		timeout:       {{.Options.Timeout.Seconds}} * time.Second, // Service-level timeout (0 = no timeout)
+		timeout:       {{ToGoDuration .Options.Timeout}}, // Service-level timeout (0 = no timeout)
 		metadata:      map[string]string{
 {{- range $key, $value := .Options.Metadata}}
 			"{{$key}}": "{{$value}}",
@@ -123,9 +123,10 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 	if cfg.js != nil {
 		{{- range .Service.Methods}}
 		{{- $eopts := GetEndpointOptions .}}
+		{{- if not $eopts.Skip}}
 		{{- if $eopts.KVStore}}
 		// Auto-create KV bucket "{{$eopts.KVStore.Bucket}}" for {{.GoName}}
-			if _, err := cfg.js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
+			if kvHandle, err := cfg.js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
 				Bucket:      "{{$eopts.KVStore.Bucket}}",
 				{{- if $eopts.KVStore.Description}}
 				Description: "{{$eopts.KVStore.Description}}",
@@ -151,11 +152,18 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 				{{- end}}
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create KV bucket \"{{$eopts.KVStore.Bucket}}\": %v\n", err)
+			} else {
+				{{- if not $eopts.KVStore.ClientOnly}}
+				// Cache the bucket handle so the handler doesn't re-open it per request
+				handlers.kv{{.GoName}} = kvHandle
+				{{- else}}
+				_ = kvHandle
+				{{- end}}
 			}
 		{{- end}}
 		{{- if $eopts.ObjectStore}}
 		// Auto-create Object Store bucket "{{$eopts.ObjectStore.Bucket}}" for {{.GoName}}
-		if _, err := cfg.js.CreateOrUpdateObjectStore(context.Background(), jetstream.ObjectStoreConfig{
+		if objHandle, err := cfg.js.CreateOrUpdateObjectStore(context.Background(), jetstream.ObjectStoreConfig{
 			Bucket:      "{{$eopts.ObjectStore.Bucket}}",
 			{{- if $eopts.ObjectStore.Description}}
 			Description: "{{$eopts.ObjectStore.Description}}",
@@ -168,7 +176,15 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 			{{- end}}
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create Object Store bucket \"{{$eopts.ObjectStore.Bucket}}\": %v\n", err)
+		} else {
+			{{- if not $eopts.ObjectStore.ClientOnly}}
+			// Cache the bucket handle so the handler doesn't re-open it per request
+			handlers.obj{{.GoName}} = objHandle
+			{{- else}}
+			_ = objHandle
+			{{- end}}
 		}
+		{{- end}}
 		{{- end}}
 		{{- end}}
 	}
@@ -263,6 +279,17 @@ type {{ToLowerFirst .Service.GoName}}Handlers struct {
 	useJSON        bool                       // Use JSON encoding instead of binary protobuf
 	interceptor    UnaryServerInterceptor     // Chained interceptors
 	js             jetstream.JetStream        // Optional JetStream context for KV/ObjectStore
+{{- range .Service.Methods}}
+{{- $eopts := GetEndpointOptions .}}
+{{- if not $eopts.Skip}}
+{{- if and $eopts.KVStore (not $eopts.KVStore.ClientOnly)}}
+	kv{{.GoName}}  jetstream.KeyValue         // Bucket handle resolved at registration; nil if unavailable
+{{- end}}
+{{- if and $eopts.ObjectStore (not $eopts.ObjectStore.ClientOnly)}}
+	obj{{.GoName}} jetstream.ObjectStore      // Bucket handle resolved at registration; nil if unavailable
+{{- end}}
+{{- end}}
+{{- end}}
 }
 
 {{$kvWriteModeType := printf "%sKVWriteMode" (ToLowerFirst .Service.GoName)}}
@@ -319,6 +346,12 @@ func put{{.Service.GoName}}KVValue(ctx context.Context, kv jetstream.KeyValue, k
 		_, err = kv.Update(ctx, key, data, entry.Revision())
 		return err
 	case {{$kvWriteModeLastWriteWins}}:
+		// Without a per-key TTL a plain Put already implements last-write-wins;
+		// the create-first dance is only needed to attach the TTL on first write.
+		if keyTTL == 0 {
+			_, err := kv.Put(ctx, key, data)
+			return err
+		}
 		if err := create(); err == nil {
 			return nil
 		} else if !errors.Is(err, jetstream.ErrKeyExists) {
@@ -341,7 +374,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	// If endpoint timeout is set (> 0), use it; otherwise use service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
-	timeout = {{$endpointOpts.Timeout.Seconds}} * time.Second // Endpoint-specific timeout
+	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 	
 	// Create context with timeout if configured, otherwise use background context
@@ -459,7 +492,13 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 			{{- end}}
 			if h.js != nil {
 				kvKey := {{ResolveKeyTemplateGo $endpointOpts.KVStore.KeyTemplate .}}
-				kv, kvErr := h.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
+				// Use the bucket handle cached at registration; fall back to a
+				// per-request lookup only if registration could not resolve it.
+				kv := h.kv{{.GoName}}
+				var kvErr error
+				if kv == nil {
+					kv, kvErr = h.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
+				}
 				if kvErr != nil {
 					{{- if IsKVPersistFailureRequired $endpointOpts.KVStore}}
 					req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %v", kvErr), nil)
@@ -493,7 +532,13 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	// Auto-persist response to Object Store (bucket: "{{$endpointOpts.ObjectStore.Bucket}}")
 	if h.js != nil {
 		objKey := {{ResolveKeyTemplateGo $endpointOpts.ObjectStore.KeyTemplate .}}
-		obj, objErr := h.js.ObjectStore(ctx, "{{$endpointOpts.ObjectStore.Bucket}}")
+		// Use the bucket handle cached at registration; fall back to a
+		// per-request lookup only if registration could not resolve it.
+		obj := h.obj{{.GoName}}
+		var objErr error
+		if obj == nil {
+			obj, objErr = h.js.ObjectStore(ctx, "{{$endpointOpts.ObjectStore.Bucket}}")
+		}
 		if objErr != nil {
 			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: Object Store bucket \"{{$endpointOpts.ObjectStore.Bucket}}\" not available for {{.GoName}}: %v\n", objErr)
 		} else {
@@ -525,10 +570,14 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 // {{.GoName}} handles server-side streaming RPC.
 // Client sends a single request; server streams back multiple responses.
 func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Request) {
+	// Run the stream in its own goroutine so this subscription callback returns
+	// immediately: NATS dispatches messages to a subscription serially, so a
+	// long-lived stream would otherwise block every other request on this endpoint.
+	go func() {
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
-	timeout = {{$endpointOpts.Timeout.Seconds}} * time.Second // Endpoint-specific timeout
+	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 
 	ctx := context.Background()
@@ -582,6 +631,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 		return
 	}
 	sender.Close()
+	}()
 }
 {{- end}}
 {{- end}}
@@ -591,10 +641,14 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 // {{.GoName}} handles client-side streaming RPC.
 // Client streams multiple requests; server responds once.
 func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Request) {
+	// Run the stream in its own goroutine so this subscription callback returns
+	// immediately: NATS dispatches messages to a subscription serially, so a
+	// long-lived stream would otherwise block every other request on this endpoint.
+	go func() {
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
-	timeout = {{$endpointOpts.Timeout.Seconds}} * time.Second // Endpoint-specific timeout
+	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 
 	ctx := context.Background()
@@ -610,7 +664,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 
 	// Create an inbox for receiving the client's stream messages
 	inbox := nats.NewInbox()
-	receiver, err := newClientStreamReceiver(h.nc, inbox, false)
+	receiver, err := newClientStreamReceiver(h.nc, inbox, {{if $endpointOpts.Stream}}{{$endpointOpts.Stream.Ordered}}{{else}}false{{end}})
 	if err != nil {
 		req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to setup stream: %v", err), nil)
 		return
@@ -670,6 +724,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	if replySubject != "" {
 		h.nc.Publish(replySubject, data)
 	}
+	}()
 }
 {{- end}}
 {{- end}}
@@ -678,10 +733,14 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 // {{.GoName}} handles bidirectional streaming RPC.
 // Both client and server can send and receive messages concurrently.
 func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Request) {
+	// Run the stream in its own goroutine so this subscription callback returns
+	// immediately: NATS dispatches messages to a subscription serially, so a
+	// long-lived stream would otherwise block every other request on this endpoint.
+	go func() {
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
-	timeout = {{$endpointOpts.Timeout.Seconds}} * time.Second // Endpoint-specific timeout
+	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 
 	ctx := context.Background()
@@ -697,7 +756,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 
 	// Create inbox for receiving client stream messages
 	serverInbox := nats.NewInbox()
-	receiver, err := newClientStreamReceiver(h.nc, serverInbox, false)
+	receiver, err := newClientStreamReceiver(h.nc, serverInbox, {{if $endpointOpts.Stream}}{{$endpointOpts.Stream.Ordered}}{{else}}false{{end}})
 	if err != nil {
 		req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to setup stream: %v", err), nil)
 		return
@@ -730,6 +789,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 		return
 	}
 	sender.Close()
+	}()
 }
 {{- end}}
 
