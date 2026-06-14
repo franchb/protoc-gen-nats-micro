@@ -27,10 +27,11 @@ package {{.File.GoPackageName}}
 {{- $needsChunkedSendImports = true -}}
 {{- end -}}
 {{- /* "os" (os.Stderr / os.Open) is used by: unary handler respond-error
-       paths, the client-streaming (non-bidi) handler error paths, the
-       KV/ObjectStore registration + persistence warning paths, and the
-       chunked client-streaming SendFile helper. */ -}}
-{{- if or (IsUnary .) (and (IsClientStreaming .) (not (IsServerStreaming .))) $endpointOpts.KVStore $endpointOpts.ObjectStore -}}
+       paths, every streaming handler's panic-recovery server-side log, the
+       client-streaming handler error paths, the KV/ObjectStore registration +
+       persistence warning paths, and the chunked client-streaming SendFile
+       helper. In practice any non-skipped handler needs it. */ -}}
+{{- if or (IsUnary .) (IsServerStreaming .) (IsClientStreaming .) $endpointOpts.KVStore $endpointOpts.ObjectStore -}}
 {{- $needsOS = true -}}
 {{- end -}}
 {{- end -}}

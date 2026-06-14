@@ -195,10 +195,11 @@ func TestGoGeneratedCodeCompiles_UnaryOnly(t *testing.T) {
 	validateGoFiles(t, gen, false, true)
 }
 
-// TestGoGeneratedCodeCompiles_ServerStreamingOnly is the inverse regression
-// guard: a proto with only server-streaming methods generates no code that
-// uses "os", so the import must be omitted — otherwise the generated file
-// fails to compile with '"os" imported and not used'.
+// TestGoGeneratedCodeCompiles_ServerStreamingOnly checks a proto with only
+// server-streaming methods. The streaming handler's panic-recovery block logs
+// the recovered cause to os.Stderr, so "os" must be imported and used —
+// otherwise the file fails to compile with a missing import or an
+// '"os" imported and not used' error.
 func TestGoGeneratedCodeCompiles_ServerStreamingOnly(t *testing.T) {
 	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
 		messageDescriptor("ListRequest", stringField("filter", 1)),
@@ -219,17 +220,16 @@ func TestGoGeneratedCodeCompiles_ServerStreamingOnly(t *testing.T) {
 		t.Fatalf("GenerateFile() error = %v", err)
 	}
 
-	validateGoFiles(t, gen, false, false)
+	validateGoFiles(t, gen, false, true)
 }
 
 // validateGoFiles checks all generated .go files parse correctly and that
 // service files import "os" exactly when the generated code uses it
-// (regression guards for issue #4 — missing import — and for the inverse:
-// an unconditional "os" import left unused by streaming-only services).
-// Set skipChunked to true to exclude chunked send files from the "os" check.
-// Set wantOS to true when the test proto has a method that needs "os"
-// (unary, client-streaming-only, or KV/ObjectStore options); set it to false
-// when no method does (e.g. server-streaming-only services).
+// (regression guards for issue #4 — missing import — and for the inverse: an
+// "os" import left unused). Set skipChunked to true to exclude chunked send
+// files from the "os" check. Set wantOS to true when the test proto has a
+// method that needs "os": that now covers any handler (unary error paths,
+// every streaming handler's panic-recovery log, KV/ObjectStore options).
 func validateGoFiles(t *testing.T, gen *protogen.Plugin, skipChunked, wantOS bool) {
 	t.Helper()
 

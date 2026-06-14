@@ -623,10 +623,12 @@ func (h *streamDemoServiceHandlers) CountUp(req micro.Request) {
 
 		sender := newServerStreamSender(h.nc, replySubject)
 		// Recover from handler panics so a single bad stream cannot crash the
-		// process; surface the failure to the client instead of letting it hang.
+		// process; log the cause server-side and return a generic error so raw
+		// internal panic text is never disclosed to the client.
 		defer func() {
 			if r := recover(); r != nil {
-				sender.CloseWithError(StreamDemoServiceErrCodeInternal, fmt.Sprintf("panic: %v", r))
+				fmt.Fprintf(os.Stderr, "[nats-micro] PANIC: CountUp stream handler: %v\n", r)
+				sender.CloseWithError(StreamDemoServiceErrCodeInternal, "internal server error")
 			}
 		}()
 		stream := &StreamDemoService_CountUp_Stream{
@@ -702,7 +704,7 @@ func (h *streamDemoServiceHandlers) Sum(req micro.Request) {
 						Header:  nats.Header{},
 					}
 					errMsg.Header.Set("Nats-Service-Error-Code", StreamDemoServiceErrCodeInternal)
-					errMsg.Header.Set("Nats-Service-Error", fmt.Sprintf("panic: %v", r))
+					errMsg.Header.Set("Nats-Service-Error", "internal server error")
 					h.nc.PublishMsg(errMsg)
 				}
 			}
@@ -804,10 +806,12 @@ func (h *streamDemoServiceHandlers) Chat(req micro.Request) {
 
 		sender := newServerStreamSender(h.nc, clientInbox)
 		// Recover from handler panics so a single bad stream cannot crash the
-		// process; surface the failure to the client instead of letting it hang.
+		// process; log the cause server-side and return a generic error so raw
+		// internal panic text is never disclosed to the client.
 		defer func() {
 			if r := recover(); r != nil {
-				sender.CloseWithError(StreamDemoServiceErrCodeInternal, fmt.Sprintf("panic: %v", r))
+				fmt.Fprintf(os.Stderr, "[nats-micro] PANIC: Chat bidi stream handler: %v\n", r)
+				sender.CloseWithError(StreamDemoServiceErrCodeInternal, "internal server error")
 			}
 		}()
 		stream := &StreamDemoService_Chat_Stream{

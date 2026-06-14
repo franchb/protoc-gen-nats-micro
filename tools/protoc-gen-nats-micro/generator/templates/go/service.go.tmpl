@@ -696,10 +696,12 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 
 	sender := newServerStreamSender(h.nc, replySubject)
 	// Recover from handler panics so a single bad stream cannot crash the
-	// process; surface the failure to the client instead of letting it hang.
+	// process; log the cause server-side and return a generic error so raw
+	// internal panic text is never disclosed to the client.
 	defer func() {
 		if r := recover(); r != nil {
-			sender.CloseWithError({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("panic: %v", r))
+			fmt.Fprintf(os.Stderr, "[nats-micro] PANIC: {{.GoName}} stream handler: %v\n", r)
+			sender.CloseWithError({{$.Service.GoName}}ErrCodeInternal, "internal server error")
 		}
 	}()
 	stream := &{{$.Service.GoName}}_{{.GoName}}_Stream{
@@ -782,7 +784,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 					Header:  nats.Header{},
 				}
 				errMsg.Header.Set("Nats-Service-Error-Code", {{$.Service.GoName}}ErrCodeInternal)
-				errMsg.Header.Set("Nats-Service-Error", fmt.Sprintf("panic: %v", r))
+				errMsg.Header.Set("Nats-Service-Error", "internal server error")
 				h.nc.PublishMsg(errMsg)
 			}
 		}
@@ -890,10 +892,12 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 
 	sender := newServerStreamSender(h.nc, clientInbox)
 	// Recover from handler panics so a single bad stream cannot crash the
-	// process; surface the failure to the client instead of letting it hang.
+	// process; log the cause server-side and return a generic error so raw
+	// internal panic text is never disclosed to the client.
 	defer func() {
 		if r := recover(); r != nil {
-			sender.CloseWithError({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("panic: %v", r))
+			fmt.Fprintf(os.Stderr, "[nats-micro] PANIC: {{.GoName}} bidi stream handler: %v\n", r)
+			sender.CloseWithError({{$.Service.GoName}}ErrCodeInternal, "internal server error")
 		}
 	}()
 	stream := &{{$.Service.GoName}}_{{.GoName}}_Stream{
