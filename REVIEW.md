@@ -118,9 +118,9 @@ Revisit if/when client libraries gain per-key TTL.
 
 `ordered` is now wired through to the stream receivers, but `max_inflight` is
 parsed into `StreamOpts.MaxInflight` and read by nothing. Either implement
-backpressure in the stream helpers (natural pairing: the new concurrent
-handlers from the S5 fix currently have unbounded per-endpoint concurrency) or
-reject/document the option.
+backpressure in the stream helpers (natural pairing: the now-concurrent stream
+handlers — goroutine/task per stream — currently have unbounded per-endpoint
+concurrency) or reject/document the option.
 
 ### 6. `x_chunked.proto` filename collision
 
@@ -188,3 +188,41 @@ the removed `-lang` flag, key-template character restrictions, `json` option
 unsupported for TS, error-code UPPER_SNAKE_CASE requirement, unknown plugin
 parameters now erroring. Note: `options_test.go` asserts specific API.md
 wording about KV semantics — keep that test in sync when editing API.md.
+
+## Open items from the PR #10 bot review (triaged 2026-06-14)
+
+CodeRabbit/Gemini reviewed PR #10. Eight confirmed bugs were fixed in this
+branch (Go `ToMillis` sub-ms truncation; error-code identifier collisions like
+`FOO_BAR`/`FOO__BAR`; Python client-streaming upload iterator swallowing
+timeouts as clean EOF; TS `recvToFile` double-close masking the real error; TS
+unary `options?.timeout || …` dropping an explicit `0`; TS bidi server-inbox
+collision under `inboxPrefix`; Go streaming goroutines crashing the process on a
+handler panic; TS bidi `recv` leaking a stale resolver on timeout). The three
+below were verified as real but deliberately deferred.
+
+### 13. Streaming goroutines are not tied to service shutdown
+
+The per-stream goroutines now recover from panics (no more process crash), but
+they still derive `ctx` from `context.Background()` (overridden only by an
+explicit timeout) and are not tracked/drained on shutdown — in-flight streams
+can outlive `service.Stop()`. The handler struct has no shutdown context or
+`WaitGroup`, so this needs a service-lifecycle addition (shutdown `ctx` +
+goroutine tracking), not a local template tweak. (CodeRabbit, go/service.go.tmpl)
+
+### 14. Server-streaming / bidi handler failures aren't surfaced to the client
+
+When a server-streaming or bidi handler raises (non-panic) in Python, the outer
+`except` only `logging.error`s — no end-of-stream/error frame is sent, so the
+client hangs until its own timeout (server-streaming also skips `sender.close()`
+on the error path). The client-streaming handler already publishes an error to
+`Reply-To`; the gap is server-streaming + bidi (Python, and the TS equivalents).
+Fix needs an error-frame on close for those paths. (CodeRabbit,
+python/service.py.tmpl, ts/service.ts.tmpl)
+
+### 15. Duplicated per-service KV `put` helper in generated Go
+
+`put{{Service}}KVValue` (service.go.tmpl) and `put{{Service}}ClientKVValue`
+(client.go.tmpl) are byte-identical but differently named, so both land in the
+generated file when client+server are emitted. No collision/compile error — pure
+duplication. Dedup would mean emitting one shared helper (e.g. in
+`shared_nats.pb.go`), a generation-model change. (Gemini)

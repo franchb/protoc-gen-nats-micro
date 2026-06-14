@@ -474,7 +474,7 @@ export class {{$.Service.GoName}}_{{.GoName}}_ClientStream {
     const raw = this.recvQueue.length > 0
       ? this.recvQueue.shift()
       : await new Promise<any>((resolve) => {
-          const timer = setTimeout(() => resolve(null), timeout);
+          const timer = setTimeout(() => { this.resolver.fn = null; resolve(null); }, timeout);
           this.resolver.fn = (v) => { clearTimeout(timer); resolve(v); };
         });
 
@@ -532,7 +532,7 @@ export class {{$.Service.GoName}}_{{.GoName}}_BidiClientStream {
     const raw = this.recvQueue.length > 0
       ? this.recvQueue.shift()
       : await new Promise<any>((resolve) => {
-          const timer = setTimeout(() => resolve(null), timeout);
+          const timer = setTimeout(() => { this.resolver.fn = null; resolve(null); }, timeout);
           this.resolver.fn = (v) => { clearTimeout(timer); resolve(v); };
         });
 

@@ -171,6 +171,12 @@ func ValidateServiceOptions(lang Language, opts ServiceOptions) error {
 			lang.Name(),
 		)
 	}
+	// Distinct raw codes can collapse to the same generated identifier:
+	// the error templates derive symbols via ToPascalCase, so FOO_BAR,
+	// FOO__BAR, and FOO_BAR_ all become "FooBar" (a duplicate Go const /
+	// Python function). Reject collisions instead of emitting code that
+	// fails to compile.
+	seen := make(map[string]string, len(opts.ErrorCodes))
 	for _, code := range opts.ErrorCodes {
 		if !errorCodeRe.MatchString(code) {
 			return fmt.Errorf(
@@ -178,6 +184,14 @@ func ValidateServiceOptions(lang Language, opts ServiceOptions) error {
 				code,
 			)
 		}
+		ident := ToPascalCase(code)
+		if prev, ok := seen[ident]; ok {
+			return fmt.Errorf(
+				"error codes %q and %q both generate the identifier %q: choose codes that differ after PascalCase normalization",
+				prev, code, ident,
+			)
+		}
+		seen[ident] = code
 	}
 	return nil
 }

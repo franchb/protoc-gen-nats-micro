@@ -126,7 +126,7 @@ export async function register{{.Service.GoName}}Handlers(
   };
 
   const subjectPrefix = options?.subjectPrefix || '{{.Options.SubjectPrefix}}';
-  const timeout = options?.timeout || {{ToMillis .Options.Timeout}};
+  const timeout = options?.timeout ?? {{ToMillis .Options.Timeout}};
 
   // Create service
   const service = await nc.services.add(config);
@@ -421,7 +421,8 @@ class {{.Service.GoName}}Handlers {
       // Create server inbox for receiving client messages
       // (NatsConnection's runtime impl exposes options, but the interface does not)
       const inboxPrefix = (nc as any).options?.inboxPrefix;
-      const serverInbox = inboxPrefix ? `${inboxPrefix}.${Date.now()}` : `_INBOX.${Date.now()}.${Math.random().toString(36).slice(2)}`;
+      const suffix = `${Date.now()}.${Math.random().toString(36).slice(2)}`;
+      const serverInbox = inboxPrefix ? `${inboxPrefix}.${suffix}` : `_INBOX.${suffix}`;
       const recvQueue: any[] = [];
       let recvResolve: ((value: any) => void) | null = null;
       const sub = nc.subscribe(serverInbox, {

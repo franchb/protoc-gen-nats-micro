@@ -885,3 +885,30 @@ func findGeneratedGoFile(t *testing.T, fileContents map[string]string, suffix st
 	t.Fatalf("failed to find generated Go file with suffix %q", suffix)
 	return ""
 }
+
+func TestValidateServiceOptionsErrorCodes(t *testing.T) {
+	lang := NewGoLanguage()
+
+	tests := []struct {
+		name    string
+		codes   []string
+		wantErr bool
+	}{
+		{name: "valid distinct codes", codes: []string{"ORDER_EXPIRED", "PAYMENT_FAILED"}, wantErr: false},
+		{name: "lowercase rejected", codes: []string{"order_expired"}, wantErr: true},
+		{name: "double underscore collides with single", codes: []string{"FOO_BAR", "FOO__BAR"}, wantErr: true},
+		{name: "trailing underscore collides", codes: []string{"FOO_BAR", "FOO_BAR_"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateServiceOptions(lang, ServiceOptions{ErrorCodes: tt.codes})
+			if tt.wantErr && err == nil {
+				t.Fatalf("ValidateServiceOptions(%v) = nil, want error", tt.codes)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("ValidateServiceOptions(%v) = %v, want nil", tt.codes, err)
+			}
+		})
+	}
+}

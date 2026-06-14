@@ -481,10 +481,12 @@ async def register_{{ToSnakeCase $serviceName}}(
                 async def stream_iter():
                     try:
                         while True:
-                            try:
-                                msg = await sub.next_msg(timeout=30.0)
-                            except Exception:
-                                break
+                            # A timeout or subscription error here is NOT a clean
+                            # end-of-stream: the stream ends only on the explicit
+                            # Nats-Stream-End marker below. Let the exception
+                            # propagate so a truncated upload fails the handler
+                            # instead of being processed as a complete request.
+                            msg = await sub.next_msg(timeout=30.0)
 
                             # Check for end-of-stream
                             if msg.headers:

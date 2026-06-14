@@ -149,6 +149,7 @@ export class ClientStreamReceiver<T> {
     const dir = nodePath.dirname(nodePath.resolve(path));
     const tmpPath = nodePath.join(dir, `.tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`);
     const fd = fs.openSync(tmpPath, 'w');
+    let closed = false;
     try {
       for await (const msg of this) {
         const chunk = (msg as any)[field];
@@ -156,9 +157,12 @@ export class ClientStreamReceiver<T> {
       }
       fs.fsyncSync(fd);
       fs.closeSync(fd);
+      closed = true;
       fs.renameSync(tmpPath, path);
     } catch (err) {
-      fs.closeSync(fd);
+      // Only close if the success path didn't already close it; otherwise
+      // closeSync would raise EBADF and mask the real error (e.g. a failed rename).
+      if (!closed) { try { fs.closeSync(fd); } catch {} }
       try { fs.unlinkSync(tmpPath); } catch {}
       throw err;
     }

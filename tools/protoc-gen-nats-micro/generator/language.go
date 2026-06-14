@@ -180,8 +180,14 @@ func ToGoDuration(d time.Duration) string {
 }
 
 // ToMillis renders a duration as an integer millisecond literal for TS/JS.
+// Positive sub-millisecond durations round up to 1ms so a configured timeout
+// never collapses to 0 (which TS treats as "no timeout").
 func ToMillis(d time.Duration) string {
-	return strconv.FormatInt(d.Milliseconds(), 10)
+	ms := d / time.Millisecond
+	if d > 0 && d%time.Millisecond != 0 {
+		ms++
+	}
+	return strconv.FormatInt(int64(ms), 10)
 }
 
 // ToPySeconds renders a duration as a valid Python float literal in seconds
