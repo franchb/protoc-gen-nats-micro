@@ -3,6 +3,7 @@
 package {{.File.GoPackageName}}
 
 {{- $needsStreamImports := false -}}
+{{- $needsSync := false -}}
 {{- $needsChunkedRecvImports := false -}}
 {{- $needsChunkedSendImports := false -}}
 {{- $needsOS := false -}}
@@ -13,6 +14,11 @@ package {{.File.GoPackageName}}
 {{- if not $endpointOpts.Skip -}}
 {{- if or (IsBidiStreaming .) (and (IsClientStreaming .) (not (IsServerStreaming .))) -}}
 {{- $needsStreamImports = true -}}
+{{- end -}}
+{{- /* "sync" (sync.WaitGroup for shutdown drain) is used by every streaming
+       handler's goroutine tracking, including server-streaming-only. */ -}}
+{{- if or (IsServerStreaming .) (IsClientStreaming .) -}}
+{{- $needsSync = true -}}
 {{- end -}}
 {{- if and $endpointOpts.ChunkedIO (IsServerStreaming .) -}}
 {{- $needsChunkedRecvImports = true -}}
@@ -44,6 +50,8 @@ import (
 {{- end}}
 {{- if $needsStreamImports}}
   "strconv"
+{{- end}}
+{{- if $needsSync}}
   "sync"
 {{- end}}
   "time"

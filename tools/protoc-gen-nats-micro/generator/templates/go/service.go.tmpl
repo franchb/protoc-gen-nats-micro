@@ -1,4 +1,15 @@
 {{- /* Service interface and registration function */ -}}
+{{- /* $hasStreaming: any non-skipped streaming method on this service. Gates the
+       shutdown-context + WaitGroup plumbing that lets Stop() drain in-flight streams. */ -}}
+{{- $hasStreaming := false -}}
+{{- range .Service.Methods -}}
+{{- $mopts := GetEndpointOptions . -}}
+{{- if not $mopts.Skip -}}
+{{- if or (IsServerStreaming .) (IsClientStreaming .) -}}
+{{- $hasStreaming = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if not .Options.SubjectPrefix }}
 // WARNING: Service {{.Service.GoName}} is missing required option (nats.micro.service).subject_prefix
 // The service will not function correctly without a subject prefix.
@@ -45,6 +56,10 @@ type {{.Service.GoName}}Service interface {
 type {{ToLowerFirst .Service.GoName}}Service struct {
 	micro.Service
 	subjectPrefix string
+{{- if $hasStreaming}}
+	shutdownCancel context.CancelFunc // Cancels in-flight streaming handlers on Stop
+	wg             *sync.WaitGroup    // Tracks in-flight streaming goroutines for drain
+{{- end}}
 }
 
 // Endpoints returns information about all service endpoints
@@ -59,6 +74,31 @@ func (s *{{ToLowerFirst .Service.GoName}}Service) Endpoints() []{{.Service.GoNam
 {{- end}}
 	}
 }
+{{- if $hasStreaming}}
+
+// Stop gracefully shuts the service down. It first stops the underlying micro
+// service (so no new requests are dispatched), then cancels the shutdown context
+// to signal in-flight streaming handlers, and waits—bounded by a 5s deadline—for
+// their goroutines to drain so they don't outlive Stop().
+func (s *{{ToLowerFirst .Service.GoName}}Service) Stop() error {
+	err := s.Service.Stop()
+	if s.shutdownCancel != nil {
+		s.shutdownCancel()
+	}
+	if s.wg != nil {
+		done := make(chan struct{})
+		go func() {
+			s.wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	return err
+}
+{{- end}}
 
 // Register{{.Service.GoName}}Handlers registers the service with NATS micro handlers
 // Service: {{.Options.Name}} v{{.Options.Version}}
@@ -110,6 +150,21 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		chainedInterceptor = chainUnaryServerInterceptors(cfg.serverInterceptors)
 	}
 
+{{- if $hasStreaming}}
+	// Shutdown plumbing for streaming handlers: cancelling shutdownCtx signals
+	// in-flight streams to wind down; streamWG lets Stop() drain their goroutines.
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	streamWG := &sync.WaitGroup{}
+	// On any error return below, cancel the context to avoid a leak; on success
+	// it is handed to the service wrapper, whose Stop() invokes it.
+	registered := false
+	defer func() {
+		if !registered {
+			shutdownCancel()
+		}
+	}()
+{{- end}}
+
 	handlers := &{{ToLowerFirst .Service.GoName}}Handlers{
 		nc:             nc,
 		impl:           impl,
@@ -117,6 +172,10 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		useJSON:        {{.Options.UseJSON}},
 		interceptor:    chainedInterceptor,
 		js:             cfg.js,
+{{- if $hasStreaming}}
+		shutdownCtx:    shutdownCtx,
+		wg:             streamWG,
+{{- end}}
 	}
 
 	// Auto-create KV and Object Store buckets if JetStream is available
@@ -265,9 +324,16 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		}
 	}
 
+{{- if $hasStreaming}}
+	registered = true
+{{- end}}
 	return &{{ToLowerFirst .Service.GoName}}Service{
 		Service:       svc,
 		subjectPrefix: cfg.subjectPrefix,
+{{- if $hasStreaming}}
+		shutdownCancel: shutdownCancel,
+		wg:             streamWG,
+{{- end}}
 	}, nil
 }
 
@@ -279,6 +345,10 @@ type {{ToLowerFirst .Service.GoName}}Handlers struct {
 	useJSON        bool                       // Use JSON encoding instead of binary protobuf
 	interceptor    UnaryServerInterceptor     // Chained interceptors
 	js             jetstream.JetStream        // Optional JetStream context for KV/ObjectStore
+{{- if $hasStreaming}}
+	shutdownCtx    context.Context            // Cancelled on Stop; derives each stream's ctx
+	wg             *sync.WaitGroup            // Shared with the service wrapper to drain streams
+{{- end}}
 {{- range .Service.Methods}}
 {{- $eopts := GetEndpointOptions .}}
 {{- if not $eopts.Skip}}
@@ -573,14 +643,18 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	// Run the stream in its own goroutine so this subscription callback returns
 	// immediately: NATS dispatches messages to a subscription serially, so a
 	// long-lived stream would otherwise block every other request on this endpoint.
+	// Track it on the WaitGroup so Stop() can drain in-flight streams.
+	h.wg.Add(1)
 	go func() {
+	defer h.wg.Done()
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
 	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 
-	ctx := context.Background()
+	// Derive from the service shutdown context so Stop() can wind down in-flight streams.
+	ctx := h.shutdownCtx
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -651,14 +725,18 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	// Run the stream in its own goroutine so this subscription callback returns
 	// immediately: NATS dispatches messages to a subscription serially, so a
 	// long-lived stream would otherwise block every other request on this endpoint.
+	// Track it on the WaitGroup so Stop() can drain in-flight streams.
+	h.wg.Add(1)
 	go func() {
+	defer h.wg.Done()
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
 	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 
-	ctx := context.Background()
+	// Derive from the service shutdown context so Stop() can wind down in-flight streams.
+	ctx := h.shutdownCtx
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -765,14 +843,18 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	// Run the stream in its own goroutine so this subscription callback returns
 	// immediately: NATS dispatches messages to a subscription serially, so a
 	// long-lived stream would otherwise block every other request on this endpoint.
+	// Track it on the WaitGroup so Stop() can drain in-flight streams.
+	h.wg.Add(1)
 	go func() {
+	defer h.wg.Done()
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
 	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 
-	ctx := context.Background()
+	// Derive from the service shutdown context so Stop() can wind down in-flight streams.
+	ctx := h.shutdownCtx
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)

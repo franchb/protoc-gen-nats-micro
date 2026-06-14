@@ -48,56 +48,6 @@ type {{.Service.GoName}}NatsClient struct {
 {{$kvWriteModeCompareAndSet := printf "%sCompareAndSet" $kvWriteModeType}}
 {{$kvWriteModeCreateOnly := printf "%sCreateOnly" $kvWriteModeType}}
 
-func put{{.Service.GoName}}ClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode {{$kvWriteModeType}}, keyTTL time.Duration) error {
-  create := func() error {
-    if keyTTL > 0 {
-      _, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
-      return err
-    }
-    _, err := kv.Create(ctx, key, data)
-    return err
-  }
-
-  switch mode {
-  case {{$kvWriteModeCreateOnly}}:
-    return create()
-  case {{$kvWriteModeCompareAndSet}}:
-    if err := create(); err == nil {
-      return nil
-    } else if !errors.Is(err, jetstream.ErrKeyExists) {
-      return err
-    }
-
-    entry, err := kv.Get(ctx, key)
-    if err != nil {
-      if errors.Is(err, jetstream.ErrKeyNotFound) {
-        return create()
-      }
-      return err
-    }
-
-    _, err = kv.Update(ctx, key, data, entry.Revision())
-    return err
-  case {{$kvWriteModeLastWriteWins}}:
-    // Without a per-key TTL a plain Put already implements last-write-wins;
-    // the create-first dance is only needed to attach the TTL on first write.
-    if keyTTL == 0 {
-      _, err := kv.Put(ctx, key, data)
-      return err
-    }
-    if err := create(); err == nil {
-      return nil
-    } else if !errors.Is(err, jetstream.ErrKeyExists) {
-      return err
-    }
-    _, err := kv.Put(ctx, key, data)
-    return err
-  default:
-    _, err := kv.Put(ctx, key, data)
-    return err
-  }
-}
-
 // New{{.Service.GoName}}NatsClient creates a new NATS client for {{.Service.GoName}}.
 // The client sends requests over NATS using protobuf serialization (or JSON if configured).
 func New{{.Service.GoName}}NatsClient(nc *nats.Conn, opts ...NatsClientOption) {{.Service.GoName}}NatsClientInterface {
@@ -273,7 +223,7 @@ func (c *{{$.Service.GoName}}NatsClient) Put{{.GoName}}ToKV(ctx context.Context,
   if err != nil {
     return fmt.Errorf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %w", err)
   }
-  if err := put{{$.Service.GoName}}ClientKVValue(
+  if err := put{{$.Service.GoName}}KVValue(
     ctx,
     kv,
     key,

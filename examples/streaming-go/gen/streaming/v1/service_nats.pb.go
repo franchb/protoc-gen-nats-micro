@@ -164,7 +164,9 @@ type StreamDemoServiceService interface {
 // streamDemoServiceService is the concrete implementation of StreamDemoServiceService
 type streamDemoServiceService struct {
 	micro.Service
-	subjectPrefix string
+	subjectPrefix  string
+	shutdownCancel context.CancelFunc // Cancels in-flight streaming handlers on Stop
+	wg             *sync.WaitGroup    // Tracks in-flight streaming goroutines for drain
 }
 
 // Endpoints returns information about all service endpoints
@@ -176,6 +178,29 @@ func (s *streamDemoServiceService) Endpoints() []StreamDemoServiceEndpointInfo {
 		{Name: "Sum", Subject: s.subjectPrefix + ".sum"},
 		{Name: "Chat", Subject: s.subjectPrefix + ".chat"},
 	}
+}
+
+// Stop gracefully shuts the service down. It first stops the underlying micro
+// service (so no new requests are dispatched), then cancels the shutdown context
+// to signal in-flight streaming handlers, and waits—bounded by a 5s deadline—for
+// their goroutines to drain so they don't outlive Stop().
+func (s *streamDemoServiceService) Stop() error {
+	err := s.Service.Stop()
+	if s.shutdownCancel != nil {
+		s.shutdownCancel()
+	}
+	if s.wg != nil {
+		done := make(chan struct{})
+		go func() {
+			s.wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	return err
 }
 
 // RegisterStreamDemoServiceHandlers registers the service with NATS micro handlers
@@ -218,6 +243,18 @@ func RegisterStreamDemoServiceHandlers(nc *nats.Conn, impl StreamDemoServiceNats
 	if len(cfg.serverInterceptors) > 0 {
 		chainedInterceptor = chainUnaryServerInterceptors(cfg.serverInterceptors)
 	}
+	// Shutdown plumbing for streaming handlers: cancelling shutdownCtx signals
+	// in-flight streams to wind down; streamWG lets Stop() drain their goroutines.
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	streamWG := &sync.WaitGroup{}
+	// On any error return below, cancel the context to avoid a leak; on success
+	// it is handed to the service wrapper, whose Stop() invokes it.
+	registered := false
+	defer func() {
+		if !registered {
+			shutdownCancel()
+		}
+	}()
 
 	handlers := &streamDemoServiceHandlers{
 		nc:             nc,
@@ -226,6 +263,8 @@ func RegisterStreamDemoServiceHandlers(nc *nats.Conn, impl StreamDemoServiceNats
 		useJSON:        false,
 		interceptor:    chainedInterceptor,
 		js:             cfg.js,
+		shutdownCtx:    shutdownCtx,
+		wg:             streamWG,
 	}
 
 	// Auto-create KV and Object Store buckets if JetStream is available
@@ -318,10 +357,12 @@ func RegisterStreamDemoServiceHandlers(nc *nats.Conn, impl StreamDemoServiceNats
 			return nil, fmt.Errorf("failed to add endpoint %s: %w", name, err)
 		}
 	}
-
+	registered = true
 	return &streamDemoServiceService{
-		Service:       svc,
-		subjectPrefix: cfg.subjectPrefix,
+		Service:        svc,
+		subjectPrefix:  cfg.subjectPrefix,
+		shutdownCancel: shutdownCancel,
+		wg:             streamWG,
 	}, nil
 }
 
@@ -333,6 +374,8 @@ type streamDemoServiceHandlers struct {
 	useJSON        bool                   // Use JSON encoding instead of binary protobuf
 	interceptor    UnaryServerInterceptor // Chained interceptors
 	js             jetstream.JetStream    // Optional JetStream context for KV/ObjectStore
+	shutdownCtx    context.Context        // Cancelled on Stop; derives each stream's ctx
+	wg             *sync.WaitGroup        // Shared with the service wrapper to drain streams
 }
 
 type streamDemoServiceKVWriteMode int
@@ -530,11 +573,15 @@ func (h *streamDemoServiceHandlers) CountUp(req micro.Request) {
 	// Run the stream in its own goroutine so this subscription callback returns
 	// immediately: NATS dispatches messages to a subscription serially, so a
 	// long-lived stream would otherwise block every other request on this endpoint.
+	// Track it on the WaitGroup so Stop() can drain in-flight streams.
+	h.wg.Add(1)
 	go func() {
+		defer h.wg.Done()
 		// Determine effective timeout: endpoint-specific timeout overrides service timeout
 		timeout := h.serviceTimeout
 
-		ctx := context.Background()
+		// Derive from the service shutdown context so Stop() can wind down in-flight streams.
+		ctx := h.shutdownCtx
 		var cancel context.CancelFunc
 		if timeout > 0 {
 			ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -575,6 +622,13 @@ func (h *streamDemoServiceHandlers) CountUp(req micro.Request) {
 		}
 
 		sender := newServerStreamSender(h.nc, replySubject)
+		// Recover from handler panics so a single bad stream cannot crash the
+		// process; surface the failure to the client instead of letting it hang.
+		defer func() {
+			if r := recover(); r != nil {
+				sender.CloseWithError(StreamDemoServiceErrCodeInternal, fmt.Sprintf("panic: %v", r))
+			}
+		}()
 		stream := &StreamDemoService_CountUp_Stream{
 			sender:  sender,
 			useJSON: h.useJSON,
@@ -594,11 +648,15 @@ func (h *streamDemoServiceHandlers) Sum(req micro.Request) {
 	// Run the stream in its own goroutine so this subscription callback returns
 	// immediately: NATS dispatches messages to a subscription serially, so a
 	// long-lived stream would otherwise block every other request on this endpoint.
+	// Track it on the WaitGroup so Stop() can drain in-flight streams.
+	h.wg.Add(1)
 	go func() {
+		defer h.wg.Done()
 		// Determine effective timeout: endpoint-specific timeout overrides service timeout
 		timeout := h.serviceTimeout
 
-		ctx := context.Background()
+		// Derive from the service shutdown context so Stop() can wind down in-flight streams.
+		ctx := h.shutdownCtx
 		var cancel context.CancelFunc
 		if timeout > 0 {
 			ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -627,6 +685,28 @@ func (h *streamDemoServiceHandlers) Sum(req micro.Request) {
 			receiver: receiver,
 			useJSON:  h.useJSON,
 		}
+
+		// Recover from handler panics so a single bad stream cannot crash the
+		// process; publish the failure to the client's reply inbox so it does
+		// not hang waiting for a response.
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "[nats-micro] PANIC: Sum client stream handler: %v\n", r)
+				var replySubject string
+				if req.Headers() != nil {
+					replySubject = req.Headers().Get("Reply-To")
+				}
+				if replySubject != "" {
+					errMsg := &nats.Msg{
+						Subject: replySubject,
+						Header:  nats.Header{},
+					}
+					errMsg.Header.Set("Nats-Service-Error-Code", StreamDemoServiceErrCodeInternal)
+					errMsg.Header.Set("Nats-Service-Error", fmt.Sprintf("panic: %v", r))
+					h.nc.PublishMsg(errMsg)
+				}
+			}
+		}()
 
 		resp, err := h.impl.Sum(ctx, stream)
 		if err != nil {
@@ -680,11 +760,15 @@ func (h *streamDemoServiceHandlers) Chat(req micro.Request) {
 	// Run the stream in its own goroutine so this subscription callback returns
 	// immediately: NATS dispatches messages to a subscription serially, so a
 	// long-lived stream would otherwise block every other request on this endpoint.
+	// Track it on the WaitGroup so Stop() can drain in-flight streams.
+	h.wg.Add(1)
 	go func() {
+		defer h.wg.Done()
 		// Determine effective timeout: endpoint-specific timeout overrides service timeout
 		timeout := h.serviceTimeout
 
-		ctx := context.Background()
+		// Derive from the service shutdown context so Stop() can wind down in-flight streams.
+		ctx := h.shutdownCtx
 		var cancel context.CancelFunc
 		if timeout > 0 {
 			ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -719,6 +803,13 @@ func (h *streamDemoServiceHandlers) Chat(req micro.Request) {
 		req.Respond(nil, micro.WithHeaders(micro.Headers(ackHeader)))
 
 		sender := newServerStreamSender(h.nc, clientInbox)
+		// Recover from handler panics so a single bad stream cannot crash the
+		// process; surface the failure to the client instead of letting it hang.
+		defer func() {
+			if r := recover(); r != nil {
+				sender.CloseWithError(StreamDemoServiceErrCodeInternal, fmt.Sprintf("panic: %v", r))
+			}
+		}()
 		stream := &StreamDemoService_Chat_Stream{
 			sender:   sender,
 			receiver: receiver,
@@ -844,56 +935,6 @@ type StreamDemoServiceNatsClient struct {
 	useJSON       bool                   // Use JSON encoding instead of binary protobuf
 	interceptor   UnaryClientInterceptor // Chained interceptors
 	js            jetstream.JetStream    // Optional JetStream for KV/ObjectStore reads
-}
-
-func putStreamDemoServiceClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode streamDemoServiceKVWriteMode, keyTTL time.Duration) error {
-	create := func() error {
-		if keyTTL > 0 {
-			_, err := kv.Create(ctx, key, data, jetstream.KeyTTL(keyTTL))
-			return err
-		}
-		_, err := kv.Create(ctx, key, data)
-		return err
-	}
-
-	switch mode {
-	case streamDemoServiceKVWriteModeCreateOnly:
-		return create()
-	case streamDemoServiceKVWriteModeCompareAndSet:
-		if err := create(); err == nil {
-			return nil
-		} else if !errors.Is(err, jetstream.ErrKeyExists) {
-			return err
-		}
-
-		entry, err := kv.Get(ctx, key)
-		if err != nil {
-			if errors.Is(err, jetstream.ErrKeyNotFound) {
-				return create()
-			}
-			return err
-		}
-
-		_, err = kv.Update(ctx, key, data, entry.Revision())
-		return err
-	case streamDemoServiceKVWriteModeLastWriteWins:
-		// Without a per-key TTL a plain Put already implements last-write-wins;
-		// the create-first dance is only needed to attach the TTL on first write.
-		if keyTTL == 0 {
-			_, err := kv.Put(ctx, key, data)
-			return err
-		}
-		if err := create(); err == nil {
-			return nil
-		} else if !errors.Is(err, jetstream.ErrKeyExists) {
-			return err
-		}
-		_, err := kv.Put(ctx, key, data)
-		return err
-	default:
-		_, err := kv.Put(ctx, key, data)
-		return err
-	}
 }
 
 // NewStreamDemoServiceNatsClient creates a new NATS client for StreamDemoService.

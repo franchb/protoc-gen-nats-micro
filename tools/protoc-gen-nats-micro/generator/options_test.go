@@ -345,13 +345,20 @@ func TestGenerateFileEmitsNewKVFeatureWiring(t *testing.T) {
 	for _, snippet := range []string{
 		"func (c *BlobServiceNatsClient) PurgeCreateBlobFromKV(ctx context.Context, key string) error",
 		"jetstream.PurgeTTL(1800000000000*time.Nanosecond)",
-		"func putBlobServiceClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode blobServiceKVWriteMode, keyTTL time.Duration) error",
+		"func putBlobServiceKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode blobServiceKVWriteMode, keyTTL time.Duration) error",
 		"jetstream.KeyTTL(keyTTL)",
 		"300000000000*time.Nanosecond",
 	} {
 		if !strings.Contains(mainFile, snippet) {
 			t.Fatalf("generated file missing snippet %q", snippet)
 		}
+	}
+
+	// The client-side KV helper is de-duplicated: it shares the single
+	// putBlobServiceKVValue defined for the server side (both render into the
+	// same generated file), so the old per-client copy must not be emitted.
+	if strings.Contains(mainFile, "putBlobServiceClientKVValue") {
+		t.Fatalf("generated file still contains the de-duplicated client KV helper putBlobServiceClientKVValue")
 	}
 }
 
@@ -589,7 +596,6 @@ func TestGenerateFileEmitsExplicitKVWriteModesAndRequiredPersist(t *testing.T) {
 		"blobServiceKVWriteModeCreateOnly",
 		"300000000000*time.Nanosecond",
 		"req.Error(BlobServiceErrCodeInternal, fmt.Sprintf(\"failed to persist CreateBlobLWW response to KV: %v\", kvErr), nil)",
-		"putBlobServiceClientKVValue(",
 	} {
 		if !strings.Contains(mainFile, snippet) {
 			t.Fatalf("generated file missing snippet %q", snippet)
