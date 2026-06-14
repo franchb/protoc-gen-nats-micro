@@ -1,4 +1,15 @@
 {{- /* Service interface and registration function */ -}}
+{{- /* $hasStreaming: any non-skipped streaming method on this service. Gates the
+       shutdown-context + WaitGroup plumbing that lets Stop() drain in-flight streams. */ -}}
+{{- $hasStreaming := false -}}
+{{- range .Service.Methods -}}
+{{- $mopts := GetEndpointOptions . -}}
+{{- if not $mopts.Skip -}}
+{{- if or (IsServerStreaming .) (IsClientStreaming .) -}}
+{{- $hasStreaming = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if not .Options.SubjectPrefix }}
 // WARNING: Service {{.Service.GoName}} is missing required option (nats.micro.service).subject_prefix
 // The service will not function correctly without a subject prefix.
@@ -45,6 +56,10 @@ type {{.Service.GoName}}Service interface {
 type {{ToLowerFirst .Service.GoName}}Service struct {
 	micro.Service
 	subjectPrefix string
+{{- if $hasStreaming}}
+	shutdownCancel context.CancelFunc // Cancels in-flight streaming handlers on Stop
+	wg             *sync.WaitGroup    // Tracks in-flight streaming goroutines for drain
+{{- end}}
 }
 
 // Endpoints returns information about all service endpoints
@@ -59,6 +74,31 @@ func (s *{{ToLowerFirst .Service.GoName}}Service) Endpoints() []{{.Service.GoNam
 {{- end}}
 	}
 }
+{{- if $hasStreaming}}
+
+// Stop gracefully shuts the service down. It first stops the underlying micro
+// service (so no new requests are dispatched), then cancels the shutdown context
+// to signal in-flight streaming handlers, and waits—bounded by a 5s deadline—for
+// their goroutines to drain so they don't outlive Stop().
+func (s *{{ToLowerFirst .Service.GoName}}Service) Stop() error {
+	err := s.Service.Stop()
+	if s.shutdownCancel != nil {
+		s.shutdownCancel()
+	}
+	if s.wg != nil {
+		done := make(chan struct{})
+		go func() {
+			s.wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	return err
+}
+{{- end}}
 
 // Register{{.Service.GoName}}Handlers registers the service with NATS micro handlers
 // Service: {{.Options.Name}} v{{.Options.Version}}
@@ -80,7 +120,7 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		version:       "{{.Options.Version}}",
 		description:   "{{.Options.Description}}",
 		subjectPrefix: "{{.Options.SubjectPrefix}}",
-		timeout:       {{.Options.Timeout.Seconds}} * time.Second, // Service-level timeout (0 = no timeout)
+		timeout:       {{ToGoDuration .Options.Timeout}}, // Service-level timeout (0 = no timeout)
 		metadata:      map[string]string{
 {{- range $key, $value := .Options.Metadata}}
 			"{{$key}}": "{{$value}}",
@@ -110,6 +150,21 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		chainedInterceptor = chainUnaryServerInterceptors(cfg.serverInterceptors)
 	}
 
+{{- if $hasStreaming}}
+	// Shutdown plumbing for streaming handlers: cancelling shutdownCtx signals
+	// in-flight streams to wind down; streamWG lets Stop() drain their goroutines.
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	streamWG := &sync.WaitGroup{}
+	// On any error return below, cancel the context to avoid a leak; on success
+	// it is handed to the service wrapper, whose Stop() invokes it.
+	registered := false
+	defer func() {
+		if !registered {
+			shutdownCancel()
+		}
+	}()
+{{- end}}
+
 	handlers := &{{ToLowerFirst .Service.GoName}}Handlers{
 		nc:             nc,
 		impl:           impl,
@@ -117,15 +172,20 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		useJSON:        {{.Options.UseJSON}},
 		interceptor:    chainedInterceptor,
 		js:             cfg.js,
+{{- if $hasStreaming}}
+		shutdownCtx:    shutdownCtx,
+		wg:             streamWG,
+{{- end}}
 	}
 
 	// Auto-create KV and Object Store buckets if JetStream is available
 	if cfg.js != nil {
 		{{- range .Service.Methods}}
 		{{- $eopts := GetEndpointOptions .}}
+		{{- if not $eopts.Skip}}
 		{{- if $eopts.KVStore}}
 		// Auto-create KV bucket "{{$eopts.KVStore.Bucket}}" for {{.GoName}}
-			if _, err := cfg.js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
+			if kvHandle, err := cfg.js.CreateOrUpdateKeyValue(context.Background(), jetstream.KeyValueConfig{
 				Bucket:      "{{$eopts.KVStore.Bucket}}",
 				{{- if $eopts.KVStore.Description}}
 				Description: "{{$eopts.KVStore.Description}}",
@@ -151,11 +211,18 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 				{{- end}}
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create KV bucket \"{{$eopts.KVStore.Bucket}}\": %v\n", err)
+			} else {
+				{{- if not $eopts.KVStore.ClientOnly}}
+				// Cache the bucket handle so the handler doesn't re-open it per request
+				handlers.kv{{.GoName}} = kvHandle
+				{{- else}}
+				_ = kvHandle
+				{{- end}}
 			}
 		{{- end}}
 		{{- if $eopts.ObjectStore}}
 		// Auto-create Object Store bucket "{{$eopts.ObjectStore.Bucket}}" for {{.GoName}}
-		if _, err := cfg.js.CreateOrUpdateObjectStore(context.Background(), jetstream.ObjectStoreConfig{
+		if objHandle, err := cfg.js.CreateOrUpdateObjectStore(context.Background(), jetstream.ObjectStoreConfig{
 			Bucket:      "{{$eopts.ObjectStore.Bucket}}",
 			{{- if $eopts.ObjectStore.Description}}
 			Description: "{{$eopts.ObjectStore.Description}}",
@@ -168,7 +235,15 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 			{{- end}}
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: failed to create Object Store bucket \"{{$eopts.ObjectStore.Bucket}}\": %v\n", err)
+		} else {
+			{{- if not $eopts.ObjectStore.ClientOnly}}
+			// Cache the bucket handle so the handler doesn't re-open it per request
+			handlers.obj{{.GoName}} = objHandle
+			{{- else}}
+			_ = objHandle
+			{{- end}}
 		}
+		{{- end}}
 		{{- end}}
 		{{- end}}
 	}
@@ -249,9 +324,16 @@ func Register{{.Service.GoName}}Handlers(nc *nats.Conn, impl {{.Service.GoName}}
 		}
 	}
 
+{{- if $hasStreaming}}
+	registered = true
+{{- end}}
 	return &{{ToLowerFirst .Service.GoName}}Service{
 		Service:       svc,
 		subjectPrefix: cfg.subjectPrefix,
+{{- if $hasStreaming}}
+		shutdownCancel: shutdownCancel,
+		wg:             streamWG,
+{{- end}}
 	}, nil
 }
 
@@ -263,6 +345,21 @@ type {{ToLowerFirst .Service.GoName}}Handlers struct {
 	useJSON        bool                       // Use JSON encoding instead of binary protobuf
 	interceptor    UnaryServerInterceptor     // Chained interceptors
 	js             jetstream.JetStream        // Optional JetStream context for KV/ObjectStore
+{{- if $hasStreaming}}
+	shutdownCtx    context.Context            // Cancelled on Stop; derives each stream's ctx
+	wg             *sync.WaitGroup            // Shared with the service wrapper to drain streams
+{{- end}}
+{{- range .Service.Methods}}
+{{- $eopts := GetEndpointOptions .}}
+{{- if not $eopts.Skip}}
+{{- if and $eopts.KVStore (not $eopts.KVStore.ClientOnly)}}
+	kv{{.GoName}}  jetstream.KeyValue         // Bucket handle resolved at registration; nil if unavailable
+{{- end}}
+{{- if and $eopts.ObjectStore (not $eopts.ObjectStore.ClientOnly)}}
+	obj{{.GoName}} jetstream.ObjectStore      // Bucket handle resolved at registration; nil if unavailable
+{{- end}}
+{{- end}}
+{{- end}}
 }
 
 {{$kvWriteModeType := printf "%sKVWriteMode" (ToLowerFirst .Service.GoName)}}
@@ -319,6 +416,12 @@ func put{{.Service.GoName}}KVValue(ctx context.Context, kv jetstream.KeyValue, k
 		_, err = kv.Update(ctx, key, data, entry.Revision())
 		return err
 	case {{$kvWriteModeLastWriteWins}}:
+		// Without a per-key TTL a plain Put already implements last-write-wins;
+		// the create-first dance is only needed to attach the TTL on first write.
+		if keyTTL == 0 {
+			_, err := kv.Put(ctx, key, data)
+			return err
+		}
 		if err := create(); err == nil {
 			return nil
 		} else if !errors.Is(err, jetstream.ErrKeyExists) {
@@ -341,7 +444,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	// If endpoint timeout is set (> 0), use it; otherwise use service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
-	timeout = {{$endpointOpts.Timeout.Seconds}} * time.Second // Endpoint-specific timeout
+	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 	
 	// Create context with timeout if configured, otherwise use background context
@@ -459,7 +562,13 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 			{{- end}}
 			if h.js != nil {
 				kvKey := {{ResolveKeyTemplateGo $endpointOpts.KVStore.KeyTemplate .}}
-				kv, kvErr := h.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
+				// Use the bucket handle cached at registration; fall back to a
+				// per-request lookup only if registration could not resolve it.
+				kv := h.kv{{.GoName}}
+				var kvErr error
+				if kv == nil {
+					kv, kvErr = h.js.KeyValue(ctx, "{{$endpointOpts.KVStore.Bucket}}")
+				}
 				if kvErr != nil {
 					{{- if IsKVPersistFailureRequired $endpointOpts.KVStore}}
 					req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to open KV bucket \"{{$endpointOpts.KVStore.Bucket}}\": %v", kvErr), nil)
@@ -493,7 +602,13 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	// Auto-persist response to Object Store (bucket: "{{$endpointOpts.ObjectStore.Bucket}}")
 	if h.js != nil {
 		objKey := {{ResolveKeyTemplateGo $endpointOpts.ObjectStore.KeyTemplate .}}
-		obj, objErr := h.js.ObjectStore(ctx, "{{$endpointOpts.ObjectStore.Bucket}}")
+		// Use the bucket handle cached at registration; fall back to a
+		// per-request lookup only if registration could not resolve it.
+		obj := h.obj{{.GoName}}
+		var objErr error
+		if obj == nil {
+			obj, objErr = h.js.ObjectStore(ctx, "{{$endpointOpts.ObjectStore.Bucket}}")
+		}
 		if objErr != nil {
 			fmt.Fprintf(os.Stderr, "[nats-micro] WARN: Object Store bucket \"{{$endpointOpts.ObjectStore.Bucket}}\" not available for {{.GoName}}: %v\n", objErr)
 		} else {
@@ -525,13 +640,21 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 // {{.GoName}} handles server-side streaming RPC.
 // Client sends a single request; server streams back multiple responses.
 func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Request) {
+	// Run the stream in its own goroutine so this subscription callback returns
+	// immediately: NATS dispatches messages to a subscription serially, so a
+	// long-lived stream would otherwise block every other request on this endpoint.
+	// Track it on the WaitGroup so Stop() can drain in-flight streams.
+	h.wg.Add(1)
+	go func() {
+	defer h.wg.Done()
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
-	timeout = {{$endpointOpts.Timeout.Seconds}} * time.Second // Endpoint-specific timeout
+	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 
-	ctx := context.Background()
+	// Derive from the service shutdown context so Stop() can wind down in-flight streams.
+	ctx := h.shutdownCtx
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -572,6 +695,15 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	}
 
 	sender := newServerStreamSender(h.nc, replySubject)
+	// Recover from handler panics so a single bad stream cannot crash the
+	// process; log the cause server-side and return a generic error so raw
+	// internal panic text is never disclosed to the client.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[nats-micro] PANIC: {{.GoName}} stream handler: %v\n", r)
+			sender.CloseWithError({{$.Service.GoName}}ErrCodeInternal, "internal server error")
+		}
+	}()
 	stream := &{{$.Service.GoName}}_{{.GoName}}_Stream{
 		sender:  sender,
 		useJSON: h.useJSON,
@@ -582,6 +714,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 		return
 	}
 	sender.Close()
+	}()
 }
 {{- end}}
 {{- end}}
@@ -591,13 +724,21 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 // {{.GoName}} handles client-side streaming RPC.
 // Client streams multiple requests; server responds once.
 func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Request) {
+	// Run the stream in its own goroutine so this subscription callback returns
+	// immediately: NATS dispatches messages to a subscription serially, so a
+	// long-lived stream would otherwise block every other request on this endpoint.
+	// Track it on the WaitGroup so Stop() can drain in-flight streams.
+	h.wg.Add(1)
+	go func() {
+	defer h.wg.Done()
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
-	timeout = {{$endpointOpts.Timeout.Seconds}} * time.Second // Endpoint-specific timeout
+	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 
-	ctx := context.Background()
+	// Derive from the service shutdown context so Stop() can wind down in-flight streams.
+	ctx := h.shutdownCtx
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -610,7 +751,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 
 	// Create an inbox for receiving the client's stream messages
 	inbox := nats.NewInbox()
-	receiver, err := newClientStreamReceiver(h.nc, inbox, false)
+	receiver, err := newClientStreamReceiver(h.nc, inbox, {{if $endpointOpts.Stream}}{{$endpointOpts.Stream.Ordered}}{{else}}false{{end}})
 	if err != nil {
 		req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to setup stream: %v", err), nil)
 		return
@@ -626,6 +767,28 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 		receiver: receiver,
 		useJSON:  h.useJSON,
 	}
+
+	// Recover from handler panics so a single bad stream cannot crash the
+	// process; publish the failure to the client's reply inbox so it does
+	// not hang waiting for a response.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[nats-micro] PANIC: {{.GoName}} client stream handler: %v\n", r)
+			var replySubject string
+			if req.Headers() != nil {
+				replySubject = req.Headers().Get("Reply-To")
+			}
+			if replySubject != "" {
+				errMsg := &nats.Msg{
+					Subject: replySubject,
+					Header:  nats.Header{},
+				}
+				errMsg.Header.Set("Nats-Service-Error-Code", {{$.Service.GoName}}ErrCodeInternal)
+				errMsg.Header.Set("Nats-Service-Error", "internal server error")
+				h.nc.PublishMsg(errMsg)
+			}
+		}
+	}()
 
 	resp, err := h.impl.{{.GoName}}(ctx, stream)
 	if err != nil {
@@ -670,6 +833,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	if replySubject != "" {
 		h.nc.Publish(replySubject, data)
 	}
+	}()
 }
 {{- end}}
 {{- end}}
@@ -678,13 +842,21 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 // {{.GoName}} handles bidirectional streaming RPC.
 // Both client and server can send and receive messages concurrently.
 func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Request) {
+	// Run the stream in its own goroutine so this subscription callback returns
+	// immediately: NATS dispatches messages to a subscription serially, so a
+	// long-lived stream would otherwise block every other request on this endpoint.
+	// Track it on the WaitGroup so Stop() can drain in-flight streams.
+	h.wg.Add(1)
+	go func() {
+	defer h.wg.Done()
 	// Determine effective timeout: endpoint-specific timeout overrides service timeout
 	timeout := h.serviceTimeout
 	{{- if gt $endpointOpts.Timeout.Nanoseconds 0}}
-	timeout = {{$endpointOpts.Timeout.Seconds}} * time.Second // Endpoint-specific timeout
+	timeout = {{ToGoDuration $endpointOpts.Timeout}} // Endpoint-specific timeout
 	{{- end}}
 
-	ctx := context.Background()
+	// Derive from the service shutdown context so Stop() can wind down in-flight streams.
+	ctx := h.shutdownCtx
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -697,7 +869,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 
 	// Create inbox for receiving client stream messages
 	serverInbox := nats.NewInbox()
-	receiver, err := newClientStreamReceiver(h.nc, serverInbox, false)
+	receiver, err := newClientStreamReceiver(h.nc, serverInbox, {{if $endpointOpts.Stream}}{{$endpointOpts.Stream.Ordered}}{{else}}false{{end}})
 	if err != nil {
 		req.Error({{$.Service.GoName}}ErrCodeInternal, fmt.Sprintf("failed to setup stream: %v", err), nil)
 		return
@@ -719,6 +891,15 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 	req.Respond(nil, micro.WithHeaders(micro.Headers(ackHeader)))
 
 	sender := newServerStreamSender(h.nc, clientInbox)
+	// Recover from handler panics so a single bad stream cannot crash the
+	// process; log the cause server-side and return a generic error so raw
+	// internal panic text is never disclosed to the client.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "[nats-micro] PANIC: {{.GoName}} bidi stream handler: %v\n", r)
+			sender.CloseWithError({{$.Service.GoName}}ErrCodeInternal, "internal server error")
+		}
+	}()
 	stream := &{{$.Service.GoName}}_{{.GoName}}_Stream{
 		sender:   sender,
 		receiver: receiver,
@@ -730,6 +911,7 @@ func (h *{{ToLowerFirst $.Service.GoName}}Handlers) {{.GoName}}(req micro.Reques
 		return
 	}
 	sender.Close()
+	}()
 }
 {{- end}}
 

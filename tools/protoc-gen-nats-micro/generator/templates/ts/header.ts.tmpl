@@ -2,9 +2,7 @@
 
 import { NatsConnection, headers, RequestOptions, MsgHdrs } from 'nats';
 import { ServiceClient, Service, ServiceConfig, ServiceError } from '@nats-io/services';
-{{- range .File.Services}}
-import * as pb from './{{ProtoBasename $.File.Proto.GetName}}';
-{{- end}}
+import * as pb from './{{ProtoBasename .File.Proto.GetName}}';
 import {
   UnaryServerInfo,
   UnaryHandler,
@@ -14,3 +12,166 @@ import {
   chainUnaryServerInterceptors,
   chainUnaryClientInterceptors,
 } from './shared_nats.pb';
+
+// Stream protocol header constants
+export const NATS_STREAM_SEQ_HEADER = 'Nats-Stream-Seq';
+export const NATS_STREAM_END_HEADER = 'Nats-Stream-End';
+export const NATS_STREAM_INBOX_HEADER = 'Nats-Stream-Inbox';
+
+/**
+ * ServerStreamSender provides server-to-client streaming capabilities
+ */
+export interface ServerStreamSender<T> {
+  seq?: number;
+  send(val: T): Promise<void>;
+  close(): Promise<void>;
+  closeWithError(code: string, message: string): Promise<void>;
+}
+
+/**
+ * ClientStreamReader for server-side reading of client-streaming messages
+ */
+export interface ClientStreamReader<T> {
+  recv(): Promise<T | null>;
+  [Symbol.asyncIterator](): AsyncIterator<T>;
+}
+
+/**
+ * BidiStream combines sending and receiving for bidirectional streaming
+ */
+export interface BidiStream<TIn, TOut> {
+  sender: ServerStreamSender<TOut>;
+  reader: ClientStreamReader<TIn>;
+  send(val: TOut): Promise<void>;
+  recv(): Promise<TIn | null>;
+  closeSend(): Promise<void>;
+  [Symbol.asyncIterator](): AsyncIterator<TIn>;
+}
+
+/**
+ * ClientStreamReceiver receives streamed messages from the server
+ */
+export class ClientStreamReceiver<T> {
+  private done = false;
+  private iter?: AsyncIterator<any>;
+
+  constructor(
+    private readonly sub: any,
+    private readonly decoder: (data: Uint8Array) => T,
+    private readonly chunkField: string = 'data'
+  ) {}
+
+  /**
+   * Receive the next message. Returns null on end-of-stream.
+   */
+  async recv(): Promise<T | null> {
+    if (this.done) return null;
+    if (!this.iter) {
+      this.iter = (this.sub as any)[Symbol.asyncIterator]();
+    }
+    const r = await this.iter.next();
+    if (r.done) {
+      this.done = true;
+      return null;
+    }
+    const msg = r.value;
+    if (msg.headers?.get('Nats-Stream-End') === 'true') {
+      const errorCode = msg.headers?.get('Nats-Service-Error-Code') || msg.headers?.get('Status');
+      if (errorCode) {
+        const desc = msg.headers?.get('Nats-Service-Error') || msg.headers?.get('Description') || 'Stream error';
+        throw new Error(`Stream error [${errorCode}]: ${desc}`);
+      }
+      this.done = true;
+      return null;
+    }
+    return this.decoder(msg.data);
+  }
+
+  /**
+   * Async iterator for receiving streamed messages
+   */
+  async *[Symbol.asyncIterator](): AsyncIterableIterator<T> {
+    while (true) {
+      const val = await this.recv();
+      if (val === null) break;
+      yield val;
+    }
+  }
+
+  /**
+   * Drain all stream chunks into a single Uint8Array.
+   * WARNING: entire payload is buffered in memory.
+   */
+  async recvBytes(field: string = this.chunkField): Promise<Uint8Array> {
+    const chunks: Uint8Array[] = [];
+    for await (const msg of this) {
+      const chunk = (msg as any)[field];
+      if (chunk) chunks.push(chunk);
+    }
+    const total = chunks.reduce((s, c) => s + c.length, 0);
+    const result = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      result.set(c, offset);
+      offset += c.length;
+    }
+    return result;
+  }
+
+  /**
+   * Stream chunks to a Node.js WritableStream.
+   */
+  async recvToWriter(writable: any, field: string = this.chunkField): Promise<void> {
+    for await (const msg of this) {
+      const chunk = (msg as any)[field];
+      if (chunk) {
+        if (typeof writable.write === 'function') {
+          await new Promise<void>((resolve, reject) => {
+            if (!writable.write(chunk)) {
+              writable.once('drain', resolve);
+            } else {
+              resolve();
+            }
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Download stream to file atomically (temp file + rename).
+   * Requires Node.js fs module.
+   */
+  async recvToFile(path: string, field: string = this.chunkField): Promise<void> {
+    const fs = await import('fs');
+    const os = await import('os');
+    const nodePath = await import('path');
+    const dir = nodePath.dirname(nodePath.resolve(path));
+    const tmpPath = nodePath.join(dir, `.tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    const fd = fs.openSync(tmpPath, 'w');
+    let closed = false;
+    try {
+      for await (const msg of this) {
+        const chunk = (msg as any)[field];
+        if (chunk) fs.writeSync(fd, chunk);
+      }
+      fs.fsyncSync(fd);
+      fs.closeSync(fd);
+      closed = true;
+      fs.renameSync(tmpPath, path);
+    } catch (err) {
+      // Only close if the success path didn't already close it; otherwise
+      // closeSync would raise EBADF and mask the real error (e.g. a failed rename).
+      if (!closed) { try { fs.closeSync(fd); } catch {} }
+      try { fs.unlinkSync(tmpPath); } catch {}
+      throw err;
+    }
+  }
+
+  /**
+   * Close the stream subscription
+   */
+  close(): void {
+    this.sub.unsubscribe();
+  }
+}

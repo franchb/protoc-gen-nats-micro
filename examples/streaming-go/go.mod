@@ -5,7 +5,7 @@ go 1.25.3
 require (
 	github.com/franchb/protoc-gen-nats-micro v0.0.0
 	github.com/nats-io/nats.go v1.50.0
-	google.golang.org/protobuf v1.36.10
+	google.golang.org/protobuf v1.36.11
 )
 
 require (

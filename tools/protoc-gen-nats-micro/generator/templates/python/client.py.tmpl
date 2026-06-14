@@ -13,7 +13,7 @@ class {{$serviceName}}Client:
         self._nc = nc
         self._subject_prefix = "{{or $serviceOptions.SubjectPrefix (ToSnakeCase $serviceName)}}"
         {{- if $serviceOptions.Timeout}}
-        self._default_timeout = {{$serviceOptions.Timeout.Seconds}}.0
+        self._default_timeout = {{ToPySeconds $serviceOptions.Timeout}}
         {{- else}}
         self._default_timeout = 5.0
         {{- end}}
@@ -52,7 +52,7 @@ class {{$serviceName}}Client:
         
         # Determine timeout
         {{- if $methodOptions.Timeout}}
-        request_timeout = timeout or {{$methodOptions.Timeout.Seconds}}.0
+        request_timeout = timeout or {{ToPySeconds $methodOptions.Timeout}}
         {{- else}}
         request_timeout = timeout or self._default_timeout
         {{- end}}
@@ -197,7 +197,8 @@ class {{$serviceName}}Client:
         # Compare-and-set: create or update with revision check
         try:
             await kv.create(key, data)
-        except Exception:
+        except KeyWrongLastSequenceError:
+            # Key already exists: update with revision check
             entry = await kv.get(key)
             await kv.update(key, data, last=entry.revision)
         {{- else if IsKVWriteModeCreateOnly $methodOptions.KVStore}}
@@ -291,7 +292,11 @@ class {{$serviceName}}Client:
         # Create client inbox for receiving server messages
         client_inbox = self._nc.new_inbox()
         recv_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
-        sub = await self._nc.subscribe(client_inbox, cb=lambda msg: recv_queue.put_nowait(msg))
+
+        async def _enqueue(msg) -> None:
+            recv_queue.put_nowait(msg)
+
+        sub = await self._nc.subscribe(client_inbox, cb=_enqueue)
 
         # Send handshake
         send_headers = headers.copy() if headers else {}
@@ -310,7 +315,7 @@ class {{$serviceName}}Client:
 
         return {{$serviceName}}_{{.GoName}}_BidiStream(
             self._nc, server_inbox, sub, recv_queue,
-            pb.{{.Output.GoIdent.GoName}}, {{$serviceOptions.UseJSON}}
+            pb.{{.Output.GoIdent.GoName}}, {{if $serviceOptions.UseJSON}}True{{else}}False{{end}}
         )
     {{- end}}
 
@@ -350,7 +355,7 @@ class {{$serviceName}}Client:
             headers=send_headers
         )
 
-        return ClientStreamReceiver(sub, pb.{{.Output.GoIdent.GoName}}, {{$serviceOptions.UseJSON}})
+        return ClientStreamReceiver(sub, pb.{{.Output.GoIdent.GoName}}, {{if $serviceOptions.UseJSON}}True{{else}}False{{end}}{{if $methodOptions.ChunkedIO}}, chunk_field="{{$methodOptions.ChunkedIO.ChunkField}}"{{end}})
     {{- end}}
     {{- end}}
 
@@ -371,7 +376,11 @@ class {{$serviceName}}Client:
         # Create client inbox for receiving response
         client_inbox = self._nc.new_inbox()
         recv_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
-        sub = await self._nc.subscribe(client_inbox, cb=lambda msg: recv_queue.put_nowait(msg))
+
+        async def _enqueue(msg) -> None:
+            recv_queue.put_nowait(msg)
+
+        sub = await self._nc.subscribe(client_inbox, cb=_enqueue)
 
         # Send handshake
         send_headers = headers.copy() if headers else {}
@@ -390,7 +399,7 @@ class {{$serviceName}}Client:
 
         return {{$serviceName}}_{{.GoName}}_ClientStream(
             self._nc, server_inbox, sub, recv_queue,
-            pb.{{.Output.GoIdent.GoName}}, {{$serviceOptions.UseJSON}}
+            pb.{{.Output.GoIdent.GoName}}, {{if $serviceOptions.UseJSON}}True{{else}}False{{end}}
         )
     {{- end}}
     {{- end}}
@@ -413,20 +422,19 @@ class {{$serviceName}}Client:
 class ClientStreamReceiver:
     """Receives streamed messages from a server-streaming RPC"""
 
-    def __init__(self, sub: Any, msg_class: Any, use_json: bool = False):
+    def __init__(self, sub: Any, msg_class: Any, use_json: bool = False, chunk_field: str = "data"):
         self._sub = sub
         self._msg_class = msg_class
         self._use_json = use_json
+        self._chunk_field = chunk_field
         self._done = False
 
     async def recv(self, timeout: float = 30.0) -> Any:
-        """Receive the next message. Raises StopAsyncIteration on end-of-stream."""
+        """Receive the next message. Raises StopAsyncIteration on end-of-stream.
+        Mid-stream failures (e.g. timeouts, disconnects) propagate as exceptions."""
         if self._done:
             raise StopAsyncIteration
-        try:
-            msg = await self._sub.next_msg(timeout=timeout)
-        except Exception:
-            raise StopAsyncIteration
+        msg = await self._sub.next_msg(timeout=timeout)
 
         # Check for end-of-stream
         if msg.headers:
@@ -448,26 +456,20 @@ class ClientStreamReceiver:
         else:
             return self._msg_class.FromString(msg.data)
 
-    {{- range $.Service.Methods}}
-    {{- $eopts := GetEndpointOptions .}}
-    {{- if not $eopts.Skip}}
-    {{- if IsServerStreaming .}}
-    {{- if not (IsClientStreaming .)}}
-    {{- if $eopts.ChunkedIO}}
-    # -- Chunked I/O download helpers for {{.GoName}} --
+    # -- Chunked I/O download helpers --
 
     async def recv_bytes(self) -> bytes:
         """Drain all stream chunks into a single bytes object.
         WARNING: entire payload is buffered in memory."""
         data = bytearray()
         async for msg in self:
-            data.extend(getattr(msg, "{{$eopts.ChunkedIO.ChunkField}}"))
+            data.extend(getattr(msg, self._chunk_field))
         return bytes(data)
 
     async def recv_to_writer(self, w) -> None:
         """Stream chunks to a file-like writable without buffering."""
         async for msg in self:
-            chunk = getattr(msg, "{{$eopts.ChunkedIO.ChunkField}}")
+            chunk = getattr(msg, self._chunk_field)
             if hasattr(w, 'write') and asyncio.iscoroutinefunction(w.write):
                 await w.write(chunk)
             else:
@@ -482,7 +484,7 @@ class ClientStreamReceiver:
         try:
             with os.fdopen(fd, 'wb') as f:
                 async for msg in self:
-                    chunk = getattr(msg, "{{$eopts.ChunkedIO.ChunkField}}")
+                    chunk = getattr(msg, self._chunk_field)
                     f.write(chunk)
                 f.flush()
                 os.fsync(f.fileno())
@@ -493,11 +495,6 @@ class ClientStreamReceiver:
             except OSError:
                 pass
             raise
-    {{- end}}
-    {{- end}}
-    {{- end}}
-    {{- end}}
-    {{- end}}
 
     def __aiter__(self):
         return self
@@ -531,7 +528,6 @@ class {{$serviceName}}_{{.GoName}}_ClientStream:
     async def send(self, msg) -> None:
         """Send a message to the server"""
         if self._use_json:
-            from google.protobuf.json_format import MessageToJson
             data = MessageToJson(msg).encode()
         else:
             data = msg.SerializeToString()
@@ -588,7 +584,6 @@ class {{$serviceName}}_{{.GoName}}_ClientStream:
                 raise RuntimeError(f"Stream error [{status_str}]: {desc_str}")
 
         if self._use_json:
-            from google.protobuf.json_format import Parse
             return Parse(raw_msg.data.decode(), self._resp_class())
         else:
             return self._resp_class.FromString(raw_msg.data)
@@ -616,7 +611,6 @@ class {{$serviceName}}_{{.GoName}}_BidiStream:
     async def send(self, msg) -> None:
         """Send a message to the server"""
         if self._use_json:
-            from google.protobuf.json_format import MessageToJson
             data = MessageToJson(msg).encode()
         else:
             data = msg.SerializeToString()
@@ -648,7 +642,6 @@ class {{$serviceName}}_{{.GoName}}_BidiStream:
                 raise StopAsyncIteration
 
         if self._use_json:
-            from google.protobuf.json_format import Parse
             return Parse(raw_msg.data.decode(), self._resp_class())
         else:
             return self._resp_class.FromString(raw_msg.data)

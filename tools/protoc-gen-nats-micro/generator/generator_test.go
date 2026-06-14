@@ -121,30 +121,6 @@ func TestToCamelCase(t *testing.T) {
 	}
 }
 
-func TestToKebabCase(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"", ""},
-		{"FooBar", "foo-bar"},
-		{"CreateProduct", "create-product"},
-		{"HTTPServer", "http-server"},
-		{"APIGateway", "api-gateway"},
-		{"parseJSON", "parse-json"},
-		{"Product", "product"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := ToKebabCase(tt.input)
-			if got != tt.expected {
-				t.Errorf("ToKebabCase(%q) = %q, want %q", tt.input, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestProtoBasename(t *testing.T) {
 	tests := []struct {
 		input    string

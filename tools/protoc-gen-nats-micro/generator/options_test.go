@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -345,13 +345,20 @@ func TestGenerateFileEmitsNewKVFeatureWiring(t *testing.T) {
 	for _, snippet := range []string{
 		"func (c *BlobServiceNatsClient) PurgeCreateBlobFromKV(ctx context.Context, key string) error",
 		"jetstream.PurgeTTL(1800000000000*time.Nanosecond)",
-		"func putBlobServiceClientKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode blobServiceKVWriteMode, keyTTL time.Duration) error",
+		"func putBlobServiceKVValue(ctx context.Context, kv jetstream.KeyValue, key string, data []byte, mode blobServiceKVWriteMode, keyTTL time.Duration) error",
 		"jetstream.KeyTTL(keyTTL)",
 		"300000000000*time.Nanosecond",
 	} {
 		if !strings.Contains(mainFile, snippet) {
 			t.Fatalf("generated file missing snippet %q", snippet)
 		}
+	}
+
+	// The client-side KV helper is de-duplicated: it shares the single
+	// putBlobServiceKVValue defined for the server side (both render into the
+	// same generated file), so the old per-client copy must not be emitted.
+	if strings.Contains(mainFile, "putBlobServiceClientKVValue") {
+		t.Fatalf("generated file still contains the de-duplicated client KV helper putBlobServiceClientKVValue")
 	}
 }
 
@@ -589,7 +596,6 @@ func TestGenerateFileEmitsExplicitKVWriteModesAndRequiredPersist(t *testing.T) {
 		"blobServiceKVWriteModeCreateOnly",
 		"300000000000*time.Nanosecond",
 		"req.Error(BlobServiceErrCodeInternal, fmt.Sprintf(\"failed to persist CreateBlobLWW response to KV: %v\", kvErr), nil)",
-		"putBlobServiceClientKVValue(",
 	} {
 		if !strings.Contains(mainFile, snippet) {
 			t.Fatalf("generated file missing snippet %q", snippet)
@@ -879,9 +885,36 @@ func findGeneratedGoFile(t *testing.T, fileContents map[string]string, suffix st
 		if suffix == "_chunked_nats.pb.go" && strings.HasSuffix(name, "_chunked_protoopaque_nats.pb.go") {
 			continue
 		}
-			return content
+		return content
 	}
 
 	t.Fatalf("failed to find generated Go file with suffix %q", suffix)
 	return ""
+}
+
+func TestValidateServiceOptionsErrorCodes(t *testing.T) {
+	lang := NewGoLanguage()
+
+	tests := []struct {
+		name    string
+		codes   []string
+		wantErr bool
+	}{
+		{name: "valid distinct codes", codes: []string{"ORDER_EXPIRED", "PAYMENT_FAILED"}, wantErr: false},
+		{name: "lowercase rejected", codes: []string{"order_expired"}, wantErr: true},
+		{name: "double underscore collides with single", codes: []string{"FOO_BAR", "FOO__BAR"}, wantErr: true},
+		{name: "trailing underscore collides", codes: []string{"FOO_BAR", "FOO_BAR_"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateServiceOptions(lang, ServiceOptions{ErrorCodes: tt.codes})
+			if tt.wantErr && err == nil {
+				t.Fatalf("ValidateServiceOptions(%v) = nil, want error", tt.codes)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("ValidateServiceOptions(%v) = %v, want nil", tt.codes, err)
+			}
+		})
+	}
 }

@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"path"
+	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"google.golang.org/protobuf/compiler/protogen"
 )
@@ -38,6 +41,14 @@ type Language interface {
 	// PostGenerate is called after shared file generation for any language-specific
 	// post-processing (e.g., Python __init__.py). Default no-op in BaseLanguage.
 	PostGenerate(gen *protogen.Plugin, file *protogen.File, pkgDir string) error
+
+	// GenerateExtraFiles lets a language emit additional per-proto-file outputs
+	// (e.g., Go's build-tagged chunked send helpers). Default no-op in BaseLanguage.
+	GenerateExtraFiles(gen *protogen.Plugin, file *protogen.File, prefix string, importPath protogen.GoImportPath) error
+
+	// SupportsJSON reports whether the language honors the
+	// (nats.micro.service).json encoding option. Default true in BaseLanguage.
+	SupportsJSON() bool
 }
 
 // TemplateData holds data passed to templates
@@ -87,6 +98,12 @@ func (b *BaseLanguage) PostGenerate(gen *protogen.Plugin, file *protogen.File, p
 	return nil
 }
 
+func (b *BaseLanguage) GenerateExtraFiles(gen *protogen.Plugin, file *protogen.File, prefix string, importPath protogen.GoImportPath) error {
+	return nil
+}
+
+func (b *BaseLanguage) SupportsJSON() bool { return true }
+
 func (b *BaseLanguage) GenerateHeader(g *protogen.GeneratedFile, file *protogen.File) error {
 	return b.executeTemplates(g, TemplateData{File: file, GeneratedFile: g}, b.headerTemplates)
 }
@@ -117,13 +134,15 @@ func FuncMap() template.FuncMap {
 	return template.FuncMap{
 		"ToSnakeCase":        ToSnakeCase,
 		"ToLowerFirst":       ToLowerFirst,
-		"ToUpperFirst":       ToUpperFirst,
 		"ToCamelCase":        ToCamelCase,
 		"ToPascalCase":       ToPascalCase,
-		"ToKebabCase":        ToKebabCase,
+		"GetServiceOptions":  GetServiceOptions,
 		"GetEndpointOptions": GetEndpointOptions,
-		"GetMethodOptions":   GetEndpointOptions, // Alias for consistency
 		"ProtoBasename":      ProtoBasename,
+		// Duration rendering (always produces valid literals in the target language)
+		"ToGoDuration": ToGoDuration,
+		"ToMillis":     ToMillis,
+		"ToPySeconds":  ToPySeconds,
 		// Streaming detection
 		"IsServerStreaming": IsServerStreaming,
 		"IsClientStreaming": IsClientStreaming,
@@ -133,23 +152,52 @@ func FuncMap() template.FuncMap {
 		"ResolveKeyTemplateGo":       ResolveKeyTemplateGo,
 		"ResolveKeyTemplateTS":       ResolveKeyTemplateTS,
 		"ResolveKeyTemplatePy":       ResolveKeyTemplatePy,
-		"IsKVWriteModeLastWriteWins": IsKVWriteModeLastWriteWins,
 		"IsKVWriteModeCompareAndSet": IsKVWriteModeCompareAndSet,
 		"IsKVWriteModeCreateOnly":    IsKVWriteModeCreateOnly,
 		"IsKVPersistFailureRequired": IsKVPersistFailureRequired,
-		// Method field accessors
-		"GetInputFields": GetInputFields,
 	}
 }
 
 // ProtoBasename returns the base name of a proto file without extension
 // e.g., "path/to/service.proto" -> "service"
 func ProtoBasename(filename string) string {
-	base := strings.TrimSuffix(filename, ".proto")
-	if idx := strings.LastIndex(base, "/"); idx >= 0 {
-		base = base[idx+1:]
+	return strings.TrimSuffix(path.Base(filename), ".proto")
+}
+
+// ToGoDuration renders a duration as a Go source expression
+// (e.g., 30s -> "30 * time.Second", 500ms -> "500 * time.Millisecond").
+func ToGoDuration(d time.Duration) string {
+	switch {
+	case d == 0:
+		return "0"
+	case d%time.Second == 0:
+		return fmt.Sprintf("%d * time.Second", d/time.Second)
+	case d%time.Millisecond == 0:
+		return fmt.Sprintf("%d * time.Millisecond", d/time.Millisecond)
+	default:
+		return fmt.Sprintf("time.Duration(%d)", int64(d))
 	}
-	return base
+}
+
+// ToMillis renders a duration as an integer millisecond literal for TS/JS.
+// Positive sub-millisecond durations round up to 1ms so a configured timeout
+// never collapses to 0 (which TS treats as "no timeout").
+func ToMillis(d time.Duration) string {
+	ms := d / time.Millisecond
+	if d > 0 && d%time.Millisecond != 0 {
+		ms++
+	}
+	return strconv.FormatInt(int64(ms), 10)
+}
+
+// ToPySeconds renders a duration as a valid Python float literal in seconds
+// (e.g., 500ms -> "0.5", 30s -> "30.0").
+func ToPySeconds(d time.Duration) string {
+	s := strconv.FormatFloat(d.Seconds(), 'f', -1, 64)
+	if !strings.Contains(s, ".") {
+		s += ".0"
+	}
+	return s
 }
 
 // ToUpperFirst converts first character to uppercase
@@ -172,29 +220,7 @@ func ToCamelCase(s string) string {
 // ToPascalCase converts SCREAMING_SNAKE_CASE to PascalCase.
 // e.g., "ORDER_EXPIRED" → "OrderExpired", "PAYMENT_FAILED" → "PaymentFailed"
 func ToPascalCase(s string) string {
-	parts := strings.Split(strings.ToLower(s), "_")
-	for i, part := range parts {
-		parts[i] = ToUpperFirst(part)
-	}
-	return strings.Join(parts, "")
-}
-
-// ToKebabCase converts CamelCase to kebab-case
-func ToKebabCase(s string) string {
-	var result strings.Builder
-	runes := []rune(s)
-	for i, r := range runes {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			prev := runes[i-1]
-			if prev >= 'a' && prev <= 'z' {
-				result.WriteByte('-')
-			} else if i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z' {
-				result.WriteByte('-')
-			}
-		}
-		result.WriteRune(r)
-	}
-	return strings.ToLower(result.String())
+	return ToCamelCase(strings.ToLower(s))
 }
 
 // GetLanguage returns a language generator by name

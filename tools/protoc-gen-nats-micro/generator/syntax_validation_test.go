@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	natspb "github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro/nats/micro"
+	natspb "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro"
 	"google.golang.org/protobuf/compiler/protogen"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
@@ -165,8 +165,8 @@ func TestGoGeneratedCodeCompiles(t *testing.T) {
 
 	// Collect and validate all generated .go files.
 	// Skip "os" check for chunked files — they only contain SendBytes
-	// which doesn't use os.
-	validateGoFiles(t, gen, true)
+	// which doesn't use os. The proto has unary methods, so "os" is required.
+	validateGoFiles(t, gen, true, true)
 }
 
 // TestGoGeneratedCodeCompiles_UnaryOnly reproduces issue #4 exactly:
@@ -192,13 +192,45 @@ func TestGoGeneratedCodeCompiles_UnaryOnly(t *testing.T) {
 		t.Fatalf("GenerateFile() error = %v", err)
 	}
 
-	validateGoFiles(t, gen, false)
+	validateGoFiles(t, gen, false, true)
 }
 
-// validateGoFiles checks all generated .go files parse correctly and
-// that service files include the "os" import (regression guard for issue #4).
-// Set skipChunked to true to exclude chunked send files from the "os" check.
-func validateGoFiles(t *testing.T, gen *protogen.Plugin, skipChunked bool) {
+// TestGoGeneratedCodeCompiles_ServerStreamingOnly checks a proto with only
+// server-streaming methods. The streaming handler's panic-recovery block logs
+// the recovered cause to os.Stderr, so "os" must be imported and used —
+// otherwise the file fails to compile with a missing import or an
+// '"os" imported and not used' error.
+func TestGoGeneratedCodeCompiles_ServerStreamingOnly(t *testing.T) {
+	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
+		messageDescriptor("ListRequest", stringField("filter", 1)),
+		messageDescriptor("ListResponse", stringField("item", 1)),
+	}, []*descriptorpb.MethodDescriptorProto{
+		methodDescriptor("ListItems", "ListRequest", "ListResponse", false, true, nil),
+	})
+
+	gen, target := newTestPlugin(t, file)
+	lang := NewGoLanguage()
+
+	shared := gen.NewGeneratedFile("test/shared_nats.pb.go", target.GoImportPath)
+	if err := lang.GenerateShared(shared, target); err != nil {
+		t.Fatalf("GenerateShared() error = %v", err)
+	}
+
+	if err := GenerateFile(gen, target, lang); err != nil {
+		t.Fatalf("GenerateFile() error = %v", err)
+	}
+
+	validateGoFiles(t, gen, false, true)
+}
+
+// validateGoFiles checks all generated .go files parse correctly and that
+// service files import "os" exactly when the generated code uses it
+// (regression guards for issue #4 — missing import — and for the inverse: an
+// "os" import left unused). Set skipChunked to true to exclude chunked send
+// files from the "os" check. Set wantOS to true when the test proto has a
+// method that needs "os": that now covers any handler (unary error paths,
+// every streaming handler's panic-recovery log, KV/ObjectStore options).
+func validateGoFiles(t *testing.T, gen *protogen.Plugin, skipChunked, wantOS bool) {
 	t.Helper()
 
 	responseFiles := gen.Response().File
@@ -224,8 +256,7 @@ func validateGoFiles(t *testing.T, gen *protogen.Plugin, skipChunked bool) {
 				return
 			}
 
-			// Import regression guard for issue #4
-			// Service files (not shared_*) must import "os"
+			// "os" import guard applies to service files only (not shared_*)
 			if strings.Contains(name, "shared") {
 				return
 			}
@@ -239,8 +270,12 @@ func validateGoFiles(t *testing.T, gen *protogen.Plugin, skipChunked bool) {
 					break
 				}
 			}
-			if !hasOsImport {
+			if wantOS && !hasOsImport {
 				t.Errorf("service file %q is missing \"os\" import (regression: issue #4).\nImports found: %v",
+					name, formatImports(parsed.Imports))
+			}
+			if !wantOS && hasOsImport {
+				t.Errorf("service file %q imports \"os\" but no generated code uses it (would fail compilation with \"imported and not used\").\nImports found: %v",
 					name, formatImports(parsed.Imports))
 			}
 		})

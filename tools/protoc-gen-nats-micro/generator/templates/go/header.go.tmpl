@@ -3,19 +3,38 @@
 package {{.File.GoPackageName}}
 
 {{- $needsStreamImports := false -}}
+{{- $needsSync := false -}}
 {{- $needsChunkedRecvImports := false -}}
 {{- $needsChunkedSendImports := false -}}
+{{- $needsOS := false -}}
 {{- range .File.Services -}}
+{{- if not (GetServiceOptions .).Skip -}}
 {{- range .Methods -}}
+{{- $endpointOpts := GetEndpointOptions . -}}
+{{- if not $endpointOpts.Skip -}}
 {{- if or (IsBidiStreaming .) (and (IsClientStreaming .) (not (IsServerStreaming .))) -}}
 {{- $needsStreamImports = true -}}
 {{- end -}}
-{{- $endpointOpts := GetEndpointOptions . -}}
+{{- /* "sync" (sync.WaitGroup for shutdown drain) is used by every streaming
+       handler's goroutine tracking, including server-streaming-only. */ -}}
+{{- if or (IsServerStreaming .) (IsClientStreaming .) -}}
+{{- $needsSync = true -}}
+{{- end -}}
 {{- if and $endpointOpts.ChunkedIO (IsServerStreaming .) -}}
 {{- $needsChunkedRecvImports = true -}}
 {{- end -}}
 {{- if and $endpointOpts.ChunkedIO (IsClientStreaming .) (not (IsServerStreaming .)) -}}
 {{- $needsChunkedSendImports = true -}}
+{{- end -}}
+{{- /* "os" (os.Stderr / os.Open) is used by: unary handler respond-error
+       paths, every streaming handler's panic-recovery server-side log, the
+       client-streaming handler error paths, the KV/ObjectStore registration +
+       persistence warning paths, and the chunked client-streaming SendFile
+       helper. In practice any non-skipped handler needs it. */ -}}
+{{- if or (IsUnary .) (IsServerStreaming .) (IsClientStreaming .) $endpointOpts.KVStore $endpointOpts.ObjectStore -}}
+{{- $needsOS = true -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end}}
@@ -27,9 +46,13 @@ import (
 {{- if or $needsChunkedRecvImports $needsChunkedSendImports}}
   "io"
 {{- end}}
+{{- if $needsOS}}
   "os"
+{{- end}}
 {{- if $needsStreamImports}}
   "strconv"
+{{- end}}
+{{- if $needsSync}}
   "sync"
 {{- end}}
   "time"

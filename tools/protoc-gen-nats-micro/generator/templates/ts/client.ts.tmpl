@@ -268,9 +268,13 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
     h.set('Reply-To', inbox);
     this.nc.publish(subject, data, { headers: h });
 
-    return new ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>(sub, (msgData: Uint8Array) => {
-      return pb.{{.Output.GoIdent.GoName}}.fromBinary(msgData);
-    });
+    return new ClientStreamReceiver<pb.{{.Output.GoIdent.GoName}}>(
+      sub,
+      (msgData: Uint8Array) => pb.{{.Output.GoIdent.GoName}}.fromBinary(msgData),
+{{- if $endpointOpts.ChunkedIO}}
+      '{{ToLowerFirst (ToCamelCase $endpointOpts.ChunkedIO.ChunkField)}}',
+{{- end}}
+    );
   }
 {{- end}}
 {{- end}}
@@ -289,10 +293,10 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
       : `_INBOX.${Date.now()}.${Math.random().toString(36).slice(2)}`;
 
     const recvQueue: any[] = [];
-    let recvResolve: ((value: any) => void) | null = null;
+    const resolver: { fn: ((m: any) => void) | null } = { fn: null };
     const sub = this.nc.subscribe(clientInbox, {
       callback: (_err: any, m: any) => {
-        if (recvResolve) { const r = recvResolve; recvResolve = null; r(m); }
+        if (resolver.fn) { const r = resolver.fn; resolver.fn = null; r(m); }
         else { recvQueue.push(m); }
       },
     });
@@ -309,7 +313,7 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
     }
 
     return new {{$.Service.GoName}}_{{.GoName}}_BidiClientStream(
-      this.nc, serverInbox, sub, recvQueue, recvResolve,
+      this.nc, serverInbox, sub, recvQueue, resolver,
       (data: Uint8Array) => pb.{{.Output.GoIdent.GoName}}.fromBinary(data),
       (val: pb.{{.Input.GoIdent.GoName}}) => pb.{{.Input.GoIdent.GoName}}.toBinary(val),
     );
@@ -331,10 +335,10 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
       : `_INBOX.${Date.now()}.${Math.random().toString(36).slice(2)}`;
 
     const recvQueue: any[] = [];
-    let recvResolve: ((value: any) => void) | null = null;
+    const resolver: { fn: ((m: any) => void) | null } = { fn: null };
     const sub = this.nc.subscribe(clientInbox, {
       callback: (_err: any, m: any) => {
-        if (recvResolve) { const r = recvResolve; recvResolve = null; r(m); }
+        if (resolver.fn) { const r = resolver.fn; resolver.fn = null; r(m); }
         else { recvQueue.push(m); }
       },
     });
@@ -351,7 +355,7 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
     }
 
     return new {{$.Service.GoName}}_{{.GoName}}_ClientStream(
-      this.nc, serverInbox, sub, recvQueue, recvResolve,
+      this.nc, serverInbox, sub, recvQueue, resolver,
       (data: Uint8Array) => pb.{{.Output.GoIdent.GoName}}.fromBinary(data),
       (val: pb.{{.Input.GoIdent.GoName}}) => pb.{{.Input.GoIdent.GoName}}.toBinary(val),
     );
@@ -377,122 +381,6 @@ export class {{.Service.GoName}}NatsClient implements I{{.Service.GoName}}NatsCl
   }
 }
 
-/**
- * ClientStreamReceiver receives streamed messages from the server
- */
-export class ClientStreamReceiver<T> {
-  private done = false;
-
-  constructor(
-    private readonly sub: any,
-    private readonly decoder: (data: Uint8Array) => T
-  ) {}
-
-  /**
-   * Receive the next message. Returns null on end-of-stream.
-   */
-  async recv(): Promise<T | null> {
-    if (this.done) return null;
-    for await (const msg of this.sub) {
-      if (msg.headers?.get('Nats-Stream-End') === 'true') {
-        const errorCode = msg.headers?.get('Nats-Service-Error-Code') || msg.headers?.get('Status');
-        if (errorCode) {
-          const desc = msg.headers?.get('Nats-Service-Error') || msg.headers?.get('Description') || 'Stream error';
-          throw new Error(`Stream error [${errorCode}]: ${desc}`);
-        }
-        this.done = true;
-        return null;
-      }
-      return this.decoder(msg.data);
-    }
-    return null;
-  }
-
-  /**
-   * Async iterator for receiving streamed messages
-   */
-  async *[Symbol.asyncIterator](): AsyncIterableIterator<T> {
-    while (true) {
-      const val = await this.recv();
-      if (val === null) break;
-      yield val;
-    }
-  }
-
-  /**
-   * Drain all stream chunks into a single Uint8Array.
-   * WARNING: entire payload is buffered in memory.
-   */
-  async recvBytes(field: string = 'data'): Promise<Uint8Array> {
-    const chunks: Uint8Array[] = [];
-    for await (const msg of this) {
-      const chunk = (msg as any)[field];
-      if (chunk) chunks.push(chunk);
-    }
-    const total = chunks.reduce((s, c) => s + c.length, 0);
-    const result = new Uint8Array(total);
-    let offset = 0;
-    for (const c of chunks) {
-      result.set(c, offset);
-      offset += c.length;
-    }
-    return result;
-  }
-
-  /**
-   * Stream chunks to a Node.js WritableStream.
-   */
-  async recvToWriter(writable: any, field: string = 'data'): Promise<void> {
-    for await (const msg of this) {
-      const chunk = (msg as any)[field];
-      if (chunk) {
-        if (typeof writable.write === 'function') {
-          await new Promise<void>((resolve, reject) => {
-            if (!writable.write(chunk)) {
-              writable.once('drain', resolve);
-            } else {
-              resolve();
-            }
-          });
-        }
-      }
-    }
-  }
-
-  /**
-   * Download stream to file atomically (temp file + rename).
-   * Requires Node.js fs module.
-   */
-  async recvToFile(path: string, field: string = 'data'): Promise<void> {
-    const fs = await import('fs');
-    const os = await import('os');
-    const nodePath = await import('path');
-    const dir = nodePath.dirname(nodePath.resolve(path));
-    const tmpPath = nodePath.join(dir, `.tmp_${Date.now()}_${Math.random().toString(36).slice(2)}`);
-    const fd = fs.openSync(tmpPath, 'w');
-    try {
-      for await (const msg of this) {
-        const chunk = (msg as any)[field];
-        if (chunk) fs.writeSync(fd, chunk);
-      }
-      fs.fsyncSync(fd);
-      fs.closeSync(fd);
-      fs.renameSync(tmpPath, path);
-    } catch (err) {
-      fs.closeSync(fd);
-      try { fs.unlinkSync(tmpPath); } catch {}
-      throw err;
-    }
-  }
-
-  /**
-   * Close the stream subscription
-   */
-  close(): void {
-    this.sub.unsubscribe();
-  }
-}
-
 {{- range .Service.Methods}}
 {{- $endpointOpts := GetEndpointOptions .}}
 {{- if not $endpointOpts.Skip}}
@@ -504,19 +392,16 @@ export class ClientStreamReceiver<T> {
  */
 export class {{$.Service.GoName}}_{{.GoName}}_ClientStream {
   private seq = 0;
-  private recvResolve: ((value: any) => void) | null;
 
   constructor(
     private readonly nc: NatsConnection,
     private readonly serverInbox: string,
     private readonly sub: any,
     private readonly recvQueue: any[],
-    recvResolve: ((value: any) => void) | null,
+    private readonly resolver: { fn: ((m: any) => void) | null },
     private readonly decoder: (data: Uint8Array) => pb.{{.Output.GoIdent.GoName}},
     private readonly encoder: (val: pb.{{.Input.GoIdent.GoName}}) => Uint8Array,
-  ) {
-    this.recvResolve = recvResolve;
-  }
+  ) {}
 
   /** Send a message to the server */
   async send(val: pb.{{.Input.GoIdent.GoName}}): Promise<void> {
@@ -589,8 +474,8 @@ export class {{$.Service.GoName}}_{{.GoName}}_ClientStream {
     const raw = this.recvQueue.length > 0
       ? this.recvQueue.shift()
       : await new Promise<any>((resolve) => {
-          const timer = setTimeout(() => resolve(null), timeout);
-          this.recvResolve = (v) => { clearTimeout(timer); resolve(v); };
+          const timer = setTimeout(() => { this.resolver.fn = null; resolve(null); }, timeout);
+          this.resolver.fn = (v) => { clearTimeout(timer); resolve(v); };
         });
 
     this.sub.unsubscribe();
@@ -621,19 +506,16 @@ export class {{$.Service.GoName}}_{{.GoName}}_ClientStream {
 export class {{$.Service.GoName}}_{{.GoName}}_BidiClientStream {
   private seq = 0;
   private recvDone = false;
-  private recvResolve: ((value: any) => void) | null;
 
   constructor(
     private readonly nc: NatsConnection,
     private readonly serverInbox: string,
     private readonly sub: any,
     private readonly recvQueue: any[],
-    recvResolve: ((value: any) => void) | null,
+    private readonly resolver: { fn: ((m: any) => void) | null },
     private readonly decoder: (data: Uint8Array) => pb.{{.Output.GoIdent.GoName}},
     private readonly encoder: (val: pb.{{.Input.GoIdent.GoName}}) => Uint8Array,
-  ) {
-    this.recvResolve = recvResolve;
-  }
+  ) {}
 
   /** Send a message to the server */
   async send(val: pb.{{.Input.GoIdent.GoName}}): Promise<void> {
@@ -650,8 +532,8 @@ export class {{$.Service.GoName}}_{{.GoName}}_BidiClientStream {
     const raw = this.recvQueue.length > 0
       ? this.recvQueue.shift()
       : await new Promise<any>((resolve) => {
-          const timer = setTimeout(() => resolve(null), timeout);
-          this.recvResolve = (v) => { clearTimeout(timer); resolve(v); };
+          const timer = setTimeout(() => { this.resolver.fn = null; resolve(null); }, timeout);
+          this.resolver.fn = (v) => { clearTimeout(timer); resolve(v); };
         });
 
     if (!raw) throw new Error('Timeout waiting for message');
