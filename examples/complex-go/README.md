@@ -4,7 +4,7 @@ This example demonstrates advanced features of `protoc-gen-nats-micro` with Go, 
 
 ## Prerequisites
 
-- Go 1.21 or higher
+- Go 1.27.0 or higher
 - NATS Server running on `localhost:4222`
 - Buf CLI installed
 

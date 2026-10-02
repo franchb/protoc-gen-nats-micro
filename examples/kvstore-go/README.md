@@ -38,7 +38,7 @@ rpc GenerateReport(GenerateReportRequest) returns (ReportResponse) {
 
 ## Prerequisites
 
-- Go 1.21+
+- Go 1.27.0+
 - NATS Server with JetStream enabled: `nats-server -js`
 - Generated code from the `kvstore_demo/v1` proto
 
