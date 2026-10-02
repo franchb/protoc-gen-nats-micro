@@ -14,7 +14,7 @@ Write standard `.proto` files, run `buf generate`, and get production-ready NATS
 
 ## Prerequisites
 
-- Go 1.21 or later
+- Go 1.27.0 or later
 - [Buf](https://buf.build/docs/installation) v2
 - NATS server ([Docker](https://hub.docker.com/_/nats) or [local install](https://docs.nats.io/running-a-nats-service/introduction/installation))
 

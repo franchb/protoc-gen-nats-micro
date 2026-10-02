@@ -75,7 +75,7 @@ Existing NATS code generation tools like [nRPC](https://github.com/nats-rpc/nrpc
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.27.0 or later
 - [Buf](https://buf.build/docs/installation) v2
 - [Task](https://taskfile.dev) (optional, for convenience)
 - NATS server (Docker or local)
