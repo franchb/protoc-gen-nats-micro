@@ -37,6 +37,8 @@ Key templates extract values from the **request** message to build the storage k
 | `{region}.{id}`                   | `region: "us", id: "123"`           | `us.123`       |
 | `orders.{customer_id}.{order_id}` | `customer_id: "c1", order_id: "o5"` | `orders.c1.o5` |
 
+An empty field value leaves a doubled dot (`user.{id}.profile` with an empty `id` becomes `user..profile`). nats.go v1.53 and later reject those keys, so `Put` and `Create` fail.
+
 ### KV Store Options
 
 | Option         | Type       | Description                                             |
