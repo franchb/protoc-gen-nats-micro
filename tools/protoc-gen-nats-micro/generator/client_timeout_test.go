@@ -47,9 +47,11 @@ func TestGenerateFileEmitsClientTimeoutForUnaryCalls(t *testing.T) {
 	for _, snippet := range []string{
 		"func WithClientTimeout(timeout time.Duration) NatsClientOption",
 		"func WithClientTimeoutFunc(fn ClientTimeoutFunc) NatsClientOption",
-		"func clientCallContext(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc)",
-		"time.Until(deadline) <= d",
-		"return context.WithTimeout(ctx, d)",
+		"func clientCallDeadline(d time.Duration) (time.Time, bool)",
+		"return time.Now().Add(d), true",
+		"func clientCallContext(ctx context.Context, deadline time.Time, ok bool) (context.Context, context.CancelFunc)",
+		"!existing.After(deadline)",
+		"return context.WithDeadline(ctx, deadline)",
 	} {
 		if !strings.Contains(sharedFile, snippet) {
 			t.Fatalf("shared file missing snippet %q", snippet)
@@ -60,7 +62,8 @@ func TestGenerateFileEmitsClientTimeoutForUnaryCalls(t *testing.T) {
 		"timeout:       cfg.timeout,",
 		"timeoutFunc:   cfg.timeoutFunc,",
 		"func (c *BlobServiceNatsClient) timeoutFor(method string) time.Duration",
-		"invokerCtx, cancel := clientCallContext(invokerCtx, c.timeoutFor(method))",
+		"callDeadline, hasCallDeadline := clientCallDeadline(c.timeoutFor(method))",
+		"invokerCtx, cancel := clientCallContext(invokerCtx, callDeadline, hasCallDeadline)",
 	} {
 		if !strings.Contains(mainFile, snippet) {
 			t.Fatalf("service file missing snippet %q", snippet)
@@ -74,10 +77,16 @@ func TestGenerateFileEmitsClientTimeoutForUnaryCalls(t *testing.T) {
 		t.Fatalf("GetItem at %d, ListItems at %d", getIdx, listIdx)
 	}
 	unary := mainFile[getIdx:listIdx]
-	if !strings.Contains(unary, "clientCallContext") {
-		t.Fatal("unary GetItem does not apply clientCallContext")
+	deadlineIdx := strings.Index(unary, "clientCallDeadline(c.timeoutFor(method))")
+	invokerIdx := strings.Index(unary, "invoker := func")
+	applyIdx := strings.Index(unary, "clientCallContext(invokerCtx, callDeadline, hasCallDeadline)")
+	if deadlineIdx < 0 || invokerIdx < deadlineIdx || applyIdx < invokerIdx {
+		t.Fatalf("deadline at %d, invoker at %d, apply at %d", deadlineIdx, invokerIdx, applyIdx)
 	}
-	if strings.Contains(mainFile[listIdx:], "clientCallContext") {
-		t.Fatal("server-streaming ListItems applies clientCallContext")
+	if strings.Contains(unary[invokerIdx:], "timeoutFor") {
+		t.Fatal("unary invoker recomputes the timeout on each call")
+	}
+	if strings.Contains(mainFile[listIdx:], "clientCallContext") || strings.Contains(mainFile[listIdx:], "clientCallDeadline") {
+		t.Fatal("server-streaming ListItems applies a client deadline")
 	}
 }

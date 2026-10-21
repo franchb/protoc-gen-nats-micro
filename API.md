@@ -914,7 +914,7 @@ func WithClientTimeout(timeout time.Duration) NatsClientOption
 func WithClientTimeoutFunc(fn ClientTimeoutFunc) NatsClientOption
 ```
 
-`WithTimeout` on `RegisterOption` bounds the server handler. It does not bound the client: a caller whose context has no deadline waits until the responder answers. `WithClientTimeout` sets one deadline for every unary call. `WithClientTimeoutFunc` picks the deadline from the bare RPC name (`"GetOrder"`). A positive func result wins over `WithClientTimeout`. An earlier deadline already on the context is kept. The deadline is applied inside the NATS call, after client interceptors, so an interceptor still observes the context the caller passed. Streaming calls are unchanged.
+`WithTimeout` on `RegisterOption` bounds the server handler. It does not bound the client: a caller whose context has no deadline waits until the responder answers. `WithClientTimeout` sets one deadline for every unary call. `WithClientTimeoutFunc` picks the deadline from the bare RPC name (`"GetOrder"`). A positive func result wins over `WithClientTimeout`. An earlier deadline already on the context is kept. The deadline is fixed when the unary method is entered and applied inside each NATS invoker call, after client interceptors, so an interceptor still observes the context the caller passed. A later invoker call keeps the time remaining until that deadline. Streaming calls are unchanged.
 
 #### KV Store & Object Store Convenience Methods
 

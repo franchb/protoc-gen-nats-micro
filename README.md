@@ -476,7 +476,7 @@ client = orderv1.NewOrderServiceNatsClient(nc,
 )
 ```
 
-An earlier deadline already on the context is kept. The deadline is applied after client interceptors, and streaming calls are unchanged.
+An earlier deadline already on the context is kept. The deadline is fixed once per unary call and applied inside each NATS invoker call, after client interceptors. A retry does not reset it. Streaming calls are unchanged.
 
 ### Runtime Overrides
 

@@ -97,7 +97,9 @@ func (c *{{.Service.GoName}}NatsClient) timeoutFor(method string) time.Duration 
 // Returns an error if the request fails or the service returns an error.
 func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{{$.QualifiedGoIdent .Input.GoIdent}}) (*{{$.QualifiedGoIdent .Output.GoIdent}}, error) {
   method := "{{.GoName}}"
-  
+  // One deadline for every invoker call in this method, including retries.
+  callDeadline, hasCallDeadline := clientCallDeadline(c.timeoutFor(method))
+
   // Pointer to store response headers - stored in context so invoker can update it
   responseHeadersPtr := &nats.Header{}
   
@@ -107,7 +109,7 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{
   
   // Define the invoker function that performs the actual NATS call
   invoker := func(invokerCtx context.Context, method string, request, reply interface{}) error {
-    invokerCtx, cancel := clientCallContext(invokerCtx, c.timeoutFor(method))
+    invokerCtx, cancel := clientCallContext(invokerCtx, callDeadline, hasCallDeadline)
     defer cancel()
 
     subject := c.subjectPrefix + ".{{ToSnakeCase .GoName}}"
