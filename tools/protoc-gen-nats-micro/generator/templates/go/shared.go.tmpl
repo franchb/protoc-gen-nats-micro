@@ -222,11 +222,19 @@ func chainUnaryServerInterceptors(interceptors []UnaryServerInterceptor) UnarySe
 	}
 }
 
+// ClientTimeoutFunc returns the deadline for one unary call.
+// method is the bare RPC name, such as "GetOrder".
+// A non-positive duration means the call keeps the context it was given,
+// unless WithClientTimeout also set a deadline.
+type ClientTimeoutFunc func(method string) time.Duration
+
 // natsClientConfig holds configuration for NATS clients
 type natsClientConfig struct {
 	subjectPrefix      string
 	clientInterceptors []UnaryClientInterceptor
 	js                 jetstream.JetStream // Optional JetStream for KV/ObjectStore reads
+	timeout            time.Duration
+	timeoutFunc        ClientTimeoutFunc
 }
 
 // NatsClientOption is a generic client configuration option
@@ -265,6 +273,42 @@ func WithNatsClientJetStream(js jetstream.JetStream) NatsClientOption {
 	return natsClientOptionFunc(func(c *natsClientConfig) {
 		c.js = js
 	})
+}
+
+// WithClientTimeout sets a deadline on every unary call that does not already
+// have an earlier one. Streaming calls are unchanged. Zero or negative
+// leaves the caller's context as it is.
+//
+// The deadline is applied inside the NATS call, after client interceptors
+// run, so an interceptor still sees the context the caller passed.
+func WithClientTimeout(timeout time.Duration) NatsClientOption {
+	return natsClientOptionFunc(func(c *natsClientConfig) {
+		c.timeout = timeout
+	})
+}
+
+// WithClientTimeoutFunc sets a per-method deadline for unary calls.
+// A positive result overrides WithClientTimeout for that method.
+// A non-positive result falls back to WithClientTimeout.
+// Streaming calls are unchanged. The same interceptor ordering as
+// WithClientTimeout applies, and an earlier deadline on the context is kept.
+func WithClientTimeoutFunc(fn ClientTimeoutFunc) NatsClientOption {
+	return natsClientOptionFunc(func(c *natsClientConfig) {
+		c.timeoutFunc = fn
+	})
+}
+
+// clientCallContext returns ctx, or a child that expires after d.
+// A non-positive d, or a deadline already sooner than d, returns ctx
+// and a cancel func that does nothing.
+func clientCallContext(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if d <= 0 {
+		return ctx, func() {}
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= d {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, d)
 }
 
 // chainUnaryClientInterceptors creates a single interceptor that chains multiple interceptors

@@ -457,6 +457,27 @@ service ProductService {
 }
 ```
 
+Server `WithTimeout` bounds the handler. It does not stop a client whose context has no deadline. Unary clients take a deadline of their own:
+
+```go
+client := orderv1.NewOrderServiceNatsClient(nc,
+    orderv1.WithClientTimeout(30 * time.Second),
+)
+
+// A positive result overrides WithClientTimeout for that RPC.
+// The name is the bare method, such as "GetOrder".
+client = orderv1.NewOrderServiceNatsClient(nc,
+    orderv1.WithClientTimeoutFunc(func(method string) time.Duration {
+        if strings.HasPrefix(method, "Get") || strings.HasPrefix(method, "List") {
+            return 45 * time.Second
+        }
+        return 90 * time.Second
+    }),
+)
+```
+
+An earlier deadline already on the context is kept. The deadline is applied after client interceptors, and streaming calls are unchanged.
+
 ### Runtime Overrides
 
 ```go
