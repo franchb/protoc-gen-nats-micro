@@ -41,6 +41,8 @@ type {{.Service.GoName}}NatsClient struct {
   useJSON       bool                       // Use JSON encoding instead of binary protobuf
   interceptor   UnaryClientInterceptor     // Chained interceptors
   js            jetstream.JetStream        // Optional JetStream for KV/ObjectStore reads
+  timeout       time.Duration              // Unary deadline from WithClientTimeout
+  timeoutFunc   ClientTimeoutFunc          // Per-method unary deadline
 }
 
 {{$kvWriteModeType := printf "%sKVWriteMode" (ToLowerFirst .Service.GoName)}}
@@ -70,8 +72,21 @@ func New{{.Service.GoName}}NatsClient(nc *nats.Conn, opts ...NatsClientOption) {
     useJSON:       {{.Options.UseJSON}},
     interceptor:   chainedInterceptor,
     js:            cfg.js,
+    timeout:       cfg.timeout,
+    timeoutFunc:   cfg.timeoutFunc,
   }
   return c
+}
+
+// timeoutFor is the unary deadline for method.
+// A timeout func that returns a positive duration wins over the client-wide timeout.
+func (c *{{.Service.GoName}}NatsClient) timeoutFor(method string) time.Duration {
+  if c.timeoutFunc != nil {
+    if d := c.timeoutFunc(method); d > 0 {
+      return d
+    }
+  }
+  return c.timeout
 }
 
 {{range .Service.Methods -}}
@@ -92,6 +107,9 @@ func (c *{{$.Service.GoName}}NatsClient) {{.GoName}}(ctx context.Context, req *{
   
   // Define the invoker function that performs the actual NATS call
   invoker := func(invokerCtx context.Context, method string, request, reply interface{}) error {
+    invokerCtx, cancel := clientCallContext(invokerCtx, c.timeoutFor(method))
+    defer cancel()
+
     subject := c.subjectPrefix + ".{{ToSnakeCase .GoName}}"
     
     // Marshal request
