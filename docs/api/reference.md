@@ -185,6 +185,10 @@ Static segments are kept as-is. `{field}` placeholders are replaced with the cor
 | `WithNatsClientSubjectPrefix(prefix)` | Override subject prefix      |
 | `WithClientInterceptor(fn)`       | Add client-side interceptor  |
 | `WithClientJetStream(js)`         | Enable KV/Object Store reads |
+| `WithClientTimeout(duration)`     | Deadline for every unary call |
+| `WithClientTimeoutFunc(fn)`       | Per-method unary deadline    |
+
+`WithTimeout` bounds the server handler. `WithClientTimeout` bounds how long the unary client waits. A deadline already on the caller's context is kept when it is earlier. The deadline is fixed once per unary call, including when a client interceptor calls the invoker again. Streaming calls are unchanged.
 
 ## Timeout Precedence
 
