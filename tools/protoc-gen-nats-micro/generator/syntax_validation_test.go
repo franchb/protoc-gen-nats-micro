@@ -10,6 +10,7 @@ import (
 
 	natspb "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro"
 	"google.golang.org/protobuf/compiler/protogen"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
@@ -72,15 +73,15 @@ func TestPythonGeneratedCodeSyntax(t *testing.T) {
 		// Client-streaming (plain)
 		methodDescriptor("Sum", "SumRequest", "SumResponse", true, false, nil),
 		// Server-streaming + chunked_io
-		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 		// Client-streaming + chunked_io
-		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -143,10 +144,10 @@ func TestGoGeneratedCodeCompiles(t *testing.T) {
 		// Bidi-streaming
 		methodDescriptor("Chat", "ChatRequest", "ChatResponse", true, true, nil),
 		// Client-streaming + chunked_io
-		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)

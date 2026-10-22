@@ -22,18 +22,18 @@ func TestGetServiceAndEndpointOptionsExtractNewMicroControls(t *testing.T) {
 	})
 
 	serviceOpts := &descriptorpb.ServiceOptions{}
-	proto.SetExtension(serviceOpts, natspb.E_Service, &natspb.ServiceOptions{
-		SubjectPrefix:      "blob",
-		QueueGroupDisabled: true,
-	})
+	proto.SetExtension(serviceOpts, natspb.E_Service, natspb.ServiceOptions_builder{
+		SubjectPrefix:      proto.String("blob"),
+		QueueGroupDisabled: proto.Bool(true),
+	}.Build())
 	file.Service[0].Options = serviceOpts
 
 	methodOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(methodOpts, natspb.E_Endpoint, &natspb.EndpointOptions{
-		QueueGroupDisabled: true,
-		PendingMsgLimit:    16,
-		PendingBytesLimit:  2048,
-	})
+	proto.SetExtension(methodOpts, natspb.E_Endpoint, natspb.EndpointOptions_builder{
+		QueueGroupDisabled: proto.Bool(true),
+		PendingMsgLimit:    proto.Int32(16),
+		PendingBytesLimit:  proto.Int32(2048),
+	}.Build())
 	file.Service[0].Method[0].Options = methodOpts
 
 	_, target := newTestPlugin(t, file)
@@ -65,18 +65,18 @@ func TestGenerateFileEmitsNewMicroControlWiring(t *testing.T) {
 	})
 
 	serviceOpts := &descriptorpb.ServiceOptions{}
-	proto.SetExtension(serviceOpts, natspb.E_Service, &natspb.ServiceOptions{
-		SubjectPrefix:      "blob",
-		QueueGroupDisabled: true,
-	})
+	proto.SetExtension(serviceOpts, natspb.E_Service, natspb.ServiceOptions_builder{
+		SubjectPrefix:      proto.String("blob"),
+		QueueGroupDisabled: proto.Bool(true),
+	}.Build())
 	file.Service[0].Options = serviceOpts
 
 	methodOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(methodOpts, natspb.E_Endpoint, &natspb.EndpointOptions{
-		QueueGroupDisabled: true,
-		PendingMsgLimit:    16,
-		PendingBytesLimit:  2048,
-	})
+	proto.SetExtension(methodOpts, natspb.E_Endpoint, natspb.EndpointOptions_builder{
+		QueueGroupDisabled: proto.Bool(true),
+		PendingMsgLimit:    proto.Int32(16),
+		PendingBytesLimit:  proto.Int32(2048),
+	}.Build())
 	file.Service[0].Method[0].Options = methodOpts
 
 	gen, target := newTestPlugin(t, file)
@@ -123,10 +123,10 @@ func TestGenerateFileImportsOSForChunkedSend(t *testing.T) {
 		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
 		messageDescriptor("UploadResponse", stringField("id", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -205,17 +205,17 @@ func TestGetEndpointOptionsExtractsNewKVOptions(t *testing.T) {
 	})
 
 	methodOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(methodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:         "blob_cache",
-		KeyTemplate:    "blob.{id}",
-		Description:    "blob cache",
-		MaxHistory:     8,
-		ClientOnly:     true,
+	proto.SetExtension(methodOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:         proto.String("blob_cache"),
+		KeyTemplate:    proto.String("blob.{id}"),
+		Description:    proto.String("blob cache"),
+		MaxHistory:     proto.Int32(8),
+		ClientOnly:     proto.Bool(true),
 		Metadata:       map[string]string{"tier": "gold", "owner": "franchb"},
 		LimitMarkerTtl: durationpb.New(15 * time.Minute),
 		KeyTtl:         durationpb.New(5 * time.Minute),
 		PurgeTtl:       durationpb.New(30 * time.Minute),
-	})
+	}.Build())
 	file.Service[0].Method[0].Options = methodOpts
 
 	_, target := newTestPlugin(t, file)
@@ -250,19 +250,19 @@ func TestGetEndpointOptionsExtractsStorageCompressionOptions(t *testing.T) {
 	})
 
 	kvMethodOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(kvMethodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:      "blob_cache",
-		KeyTemplate: "blob.{id}",
-		Compression: true,
-	})
+	proto.SetExtension(kvMethodOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:      proto.String("blob_cache"),
+		KeyTemplate: proto.String("blob.{id}"),
+		Compression: proto.Bool(true),
+	}.Build())
 	file.Service[0].Method[0].Options = kvMethodOpts
 
 	objectMethodOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(objectMethodOpts, natspb.E_ObjectStore, &natspb.ObjectStoreOptions{
-		Bucket:      "blob_objects",
-		KeyTemplate: "blob.{id}",
-		Compression: true,
-	})
+	proto.SetExtension(objectMethodOpts, natspb.E_ObjectStore, natspb.ObjectStoreOptions_builder{
+		Bucket:      proto.String("blob_objects"),
+		KeyTemplate: proto.String("blob.{id}"),
+		Compression: proto.Bool(true),
+	}.Build())
 	file.Service[0].Method[1].Options = objectMethodOpts
 
 	_, target := newTestPlugin(t, file)
@@ -293,15 +293,15 @@ func TestGenerateFileEmitsNewKVFeatureWiring(t *testing.T) {
 	})
 
 	methodOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(methodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:         "blob_cache",
-		KeyTemplate:    "blob.{id}",
-		Description:    "blob cache",
+	proto.SetExtension(methodOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:         proto.String("blob_cache"),
+		KeyTemplate:    proto.String("blob.{id}"),
+		Description:    proto.String("blob cache"),
 		Metadata:       map[string]string{"tier": "gold"},
 		LimitMarkerTtl: durationpb.New(15 * time.Minute),
 		KeyTtl:         durationpb.New(5 * time.Minute),
 		PurgeTtl:       durationpb.New(30 * time.Minute),
-	})
+	}.Build())
 	file.Service[0].Method[0].Options = methodOpts
 
 	gen, target := newTestPlugin(t, file)
@@ -374,19 +374,19 @@ func TestGenerateFileEmitsStorageCompressionWiring(t *testing.T) {
 	})
 
 	kvMethodOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(kvMethodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:      "blob_cache",
-		KeyTemplate: "blob.{id}",
-		Compression: true,
-	})
+	proto.SetExtension(kvMethodOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:      proto.String("blob_cache"),
+		KeyTemplate: proto.String("blob.{id}"),
+		Compression: proto.Bool(true),
+	}.Build())
 	file.Service[0].Method[0].Options = kvMethodOpts
 
 	objectMethodOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(objectMethodOpts, natspb.E_ObjectStore, &natspb.ObjectStoreOptions{
-		Bucket:      "blob_objects",
-		KeyTemplate: "blob.{id}",
-		Compression: true,
-	})
+	proto.SetExtension(objectMethodOpts, natspb.E_ObjectStore, natspb.ObjectStoreOptions_builder{
+		Bucket:      proto.String("blob_objects"),
+		KeyTemplate: proto.String("blob.{id}"),
+		Compression: proto.Bool(true),
+	}.Build())
 	file.Service[0].Method[1].Options = objectMethodOpts
 
 	gen, target := newTestPlugin(t, file)
@@ -456,28 +456,28 @@ func TestGetEndpointOptionsResolvesExplicitKVSemantics(t *testing.T) {
 	})
 
 	explicitOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(explicitOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:               "blob_cache",
-		KeyTemplate:          "blob.{id}",
+	proto.SetExtension(explicitOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:               proto.String("blob_cache"),
+		KeyTemplate:          proto.String("blob.{id}"),
 		KeyTtl:               durationpb.New(5 * time.Minute),
-		WriteMode:            natspb.KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS,
-		PersistFailurePolicy: natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED,
-	})
+		WriteMode:            natspb.KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS.Enum(),
+		PersistFailurePolicy: natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED.Enum(),
+	}.Build())
 	file.Service[0].Method[0].Options = explicitOpts
 
 	compatOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(compatOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:      "blob_cache",
-		KeyTemplate: "blob.{id}",
+	proto.SetExtension(compatOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:      proto.String("blob_cache"),
+		KeyTemplate: proto.String("blob.{id}"),
 		KeyTtl:      durationpb.New(5 * time.Minute),
-	})
+	}.Build())
 	file.Service[0].Method[1].Options = compatOpts
 
 	legacyOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(legacyOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:      "blob_cache",
-		KeyTemplate: "blob.{id}",
-	})
+	proto.SetExtension(legacyOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:      proto.String("blob_cache"),
+		KeyTemplate: proto.String("blob.{id}"),
+	}.Build())
 	file.Service[0].Method[2].Options = legacyOpts
 
 	_, target := newTestPlugin(t, file)
@@ -528,31 +528,31 @@ func TestGenerateFileEmitsExplicitKVWriteModesAndRequiredPersist(t *testing.T) {
 	})
 
 	lwwOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(lwwOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:               "blob_cache",
-		KeyTemplate:          "blob.{id}",
+	proto.SetExtension(lwwOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:               proto.String("blob_cache"),
+		KeyTemplate:          proto.String("blob.{id}"),
 		KeyTtl:               durationpb.New(5 * time.Minute),
-		WriteMode:            natspb.KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS,
-		PersistFailurePolicy: natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED,
-	})
+		WriteMode:            natspb.KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS.Enum(),
+		PersistFailurePolicy: natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED.Enum(),
+	}.Build())
 	file.Service[0].Method[0].Options = lwwOpts
 
 	casOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(casOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:      "blob_cache",
-		KeyTemplate: "blob.{id}",
+	proto.SetExtension(casOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:      proto.String("blob_cache"),
+		KeyTemplate: proto.String("blob.{id}"),
 		KeyTtl:      durationpb.New(5 * time.Minute),
-		WriteMode:   natspb.KVWriteMode_KV_WRITE_MODE_COMPARE_AND_SET,
-	})
+		WriteMode:   natspb.KVWriteMode_KV_WRITE_MODE_COMPARE_AND_SET.Enum(),
+	}.Build())
 	file.Service[0].Method[1].Options = casOpts
 
 	createOnlyOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(createOnlyOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:      "blob_cache",
-		KeyTemplate: "blob.{id}",
+	proto.SetExtension(createOnlyOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:      proto.String("blob_cache"),
+		KeyTemplate: proto.String("blob.{id}"),
 		KeyTtl:      durationpb.New(5 * time.Minute),
-		WriteMode:   natspb.KVWriteMode_KV_WRITE_MODE_CREATE_ONLY,
-	})
+		WriteMode:   natspb.KVWriteMode_KV_WRITE_MODE_CREATE_ONLY.Enum(),
+	}.Build())
 	file.Service[0].Method[2].Options = createOnlyOpts
 
 	gen, target := newTestPlugin(t, file)
@@ -612,11 +612,11 @@ func TestGenerateFileFailsRequiredKVPersistWhenJetStreamIsMissing(t *testing.T) 
 	})
 
 	methodOpts := &descriptorpb.MethodOptions{}
-	proto.SetExtension(methodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-		Bucket:               "blob_cache",
-		KeyTemplate:          "blob.{id}",
-		PersistFailurePolicy: natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED,
-	})
+	proto.SetExtension(methodOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+		Bucket:               proto.String("blob_cache"),
+		KeyTemplate:          proto.String("blob.{id}"),
+		PersistFailurePolicy: natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED.Enum(),
+	}.Build())
 	file.Service[0].Method[0].Options = methodOpts
 
 	gen, target := newTestPlugin(t, file)
@@ -672,10 +672,10 @@ func TestGenerateFilePrefixesKVHelperTypesPerService(t *testing.T) {
 	for _, service := range file.Service {
 		for _, method := range service.Method {
 			methodOpts := &descriptorpb.MethodOptions{}
-			proto.SetExtension(methodOpts, natspb.E_KvStore, &natspb.KVStoreOptions{
-				Bucket:      "blob_cache",
-				KeyTemplate: "blob.{id}",
-			})
+			proto.SetExtension(methodOpts, natspb.E_KvStore, natspb.KVStoreOptions_builder{
+				Bucket:      proto.String("blob_cache"),
+				KeyTemplate: proto.String("blob.{id}"),
+			}.Build())
 			method.Options = methodOpts
 		}
 	}
@@ -776,7 +776,7 @@ func TestGenerateFileQualifiesImportedGoMessageTypes(t *testing.T) {
 					".echelon.komrad.ml.v1.CreateJobResponse",
 					true,
 					false,
-					&natspb.ChunkedIOOptions{ChunkField: "data"},
+					natspb.ChunkedIOOptions_builder{ChunkField: proto.String("data")}.Build(),
 				),
 			},
 		}},
