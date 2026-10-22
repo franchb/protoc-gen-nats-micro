@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"google.golang.org/protobuf/proto"
 
 	streamv1 "example/gen/streaming/v1"
 )
@@ -19,30 +20,30 @@ type streamService struct{}
 
 // Ping — standard unary RPC
 func (s *streamService) Ping(ctx context.Context, req *streamv1.PingRequest) (*streamv1.PingResponse, error) {
-	log.Printf("✓ Ping: %s", req.Payload)
-	return &streamv1.PingResponse{
-		Payload:   "pong: " + req.Payload,
-		Timestamp: time.Now().Unix(),
-	}, nil
+	log.Printf("✓ Ping: %s", req.GetPayload())
+	return streamv1.PingResponse_builder{
+		Payload:   proto.String("pong: " + req.GetPayload()),
+		Timestamp: proto.Int64(time.Now().Unix()),
+	}.Build(), nil
 }
 
 // CountUp — server-streaming RPC
 // Emits `count` numbers starting from `start`, one at a time.
 func (s *streamService) CountUp(ctx context.Context, req *streamv1.CountUpRequest, stream *streamv1.StreamDemoService_CountUp_Stream) error {
-	log.Printf("→ CountUp: start=%d count=%d", req.Start, req.Count)
-	for i := int32(0); i < req.Count; i++ {
-		num := req.Start + i
-		resp := &streamv1.CountUpResponse{
-			Number:    num,
-			Timestamp: time.Now().Format(time.RFC3339Nano),
-		}
+	log.Printf("→ CountUp: start=%d count=%d", req.GetStart(), req.GetCount())
+	for i := int32(0); i < req.GetCount(); i++ {
+		num := req.GetStart() + i
+		resp := streamv1.CountUpResponse_builder{
+			Number:    proto.Int32(num),
+			Timestamp: proto.String(time.Now().Format(time.RFC3339Nano)),
+		}.Build()
 		if err := stream.Send(resp); err != nil {
 			return fmt.Errorf("failed to send number %d: %w", num, err)
 		}
 		log.Printf("  → sent %d", num)
 		time.Sleep(200 * time.Millisecond) // Simulate work
 	}
-	log.Printf("✓ CountUp complete (%d numbers)", req.Count)
+	log.Printf("✓ CountUp complete (%d numbers)", req.GetCount())
 	return nil
 }
 
@@ -58,12 +59,12 @@ func (s *streamService) Sum(ctx context.Context, stream *streamv1.StreamDemoServ
 			// EOF or stream ended
 			break
 		}
-		total += msg.Value
+		total += msg.GetValue()
 		count++
-		log.Printf("  ← received %d (running total: %d)", msg.Value, total)
+		log.Printf("  ← received %d (running total: %d)", msg.GetValue(), total)
 	}
 	log.Printf("✓ Sum complete: total=%d count=%d", total, count)
-	return &streamv1.SumResponse{Total: total, Count: count}, nil
+	return streamv1.SumResponse_builder{Total: proto.Int64(total), Count: proto.Int32(count)}.Build(), nil
 }
 
 // Chat — bidirectional streaming RPC
@@ -76,14 +77,14 @@ func (s *streamService) Chat(ctx context.Context, stream *streamv1.StreamDemoSer
 			// Stream ended
 			break
 		}
-		log.Printf("  ← [%s] %s", msg.User, msg.Text)
+		log.Printf("  ← [%s] %s", msg.GetUser(), msg.GetText())
 
 		// Echo back with server prefix
-		reply := &streamv1.ChatMessage{
-			User:      "server",
-			Text:      fmt.Sprintf("echo: %s", msg.Text),
-			Timestamp: time.Now().Format(time.RFC3339Nano),
-		}
+		reply := streamv1.ChatMessage_builder{
+			User:      proto.String("server"),
+			Text:      proto.String(fmt.Sprintf("echo: %s", msg.GetText())),
+			Timestamp: proto.String(time.Now().Format(time.RFC3339Nano)),
+		}.Build()
 		if err := stream.Send(reply); err != nil {
 			return fmt.Errorf("failed to send chat reply: %w", err)
 		}

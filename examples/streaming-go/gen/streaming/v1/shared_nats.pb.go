@@ -242,11 +242,19 @@ func chainUnaryServerInterceptors(interceptors []UnaryServerInterceptor) UnarySe
 	}
 }
 
+// ClientTimeoutFunc returns the deadline for one unary call.
+// method is the bare RPC name, such as "GetOrder".
+// A non-positive duration means the call keeps the context it was given,
+// unless WithClientTimeout also set a deadline.
+type ClientTimeoutFunc func(method string) time.Duration
+
 // natsClientConfig holds configuration for NATS clients
 type natsClientConfig struct {
 	subjectPrefix      string
 	clientInterceptors []UnaryClientInterceptor
 	js                 jetstream.JetStream // Optional JetStream for KV/ObjectStore reads
+	timeout            time.Duration
+	timeoutFunc        ClientTimeoutFunc
 }
 
 // NatsClientOption is a generic client configuration option
@@ -285,6 +293,53 @@ func WithNatsClientJetStream(js jetstream.JetStream) NatsClientOption {
 	return natsClientOptionFunc(func(c *natsClientConfig) {
 		c.js = js
 	})
+}
+
+// WithClientTimeout sets one deadline on every unary call that does not
+// already have an earlier one. Streaming calls are unchanged. Zero or
+// negative leaves the caller's context as it is.
+//
+// The deadline is fixed when the unary method is entered and applied inside
+// each NATS invoker call, after client interceptors run. An interceptor
+// still sees the context the caller passed. A later invoker call, such as a
+// retry, keeps the time remaining until that deadline.
+func WithClientTimeout(timeout time.Duration) NatsClientOption {
+	return natsClientOptionFunc(func(c *natsClientConfig) {
+		c.timeout = timeout
+	})
+}
+
+// WithClientTimeoutFunc sets a per-method deadline for unary calls.
+// A positive result overrides WithClientTimeout for that method.
+// A non-positive result falls back to WithClientTimeout.
+// Streaming calls are unchanged. The deadline is shared across invoker
+// calls the same way as WithClientTimeout, and an earlier deadline on the
+// context is kept.
+func WithClientTimeoutFunc(fn ClientTimeoutFunc) NatsClientOption {
+	return natsClientOptionFunc(func(c *natsClientConfig) {
+		c.timeoutFunc = fn
+	})
+}
+
+// clientCallDeadline is the absolute deadline for one unary call.
+// A non-positive d means this call adds no client deadline.
+func clientCallDeadline(d time.Duration) (time.Time, bool) {
+	if d <= 0 {
+		return time.Time{}, false
+	}
+	return time.Now().Add(d), true
+}
+
+// clientCallContext bounds ctx by deadline when ok is true.
+// A context that already expires at or before deadline is returned as it is.
+func clientCallContext(ctx context.Context, deadline time.Time, ok bool) (context.Context, context.CancelFunc) {
+	if !ok {
+		return ctx, func() {}
+	}
+	if existing, has := ctx.Deadline(); has && !existing.After(deadline) {
+		return ctx, func() {}
+	}
+	return context.WithDeadline(ctx, deadline)
 }
 
 // chainUnaryClientInterceptors creates a single interceptor that chains multiple interceptors

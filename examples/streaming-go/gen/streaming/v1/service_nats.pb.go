@@ -939,6 +939,8 @@ type StreamDemoServiceNatsClient struct {
 	useJSON       bool                   // Use JSON encoding instead of binary protobuf
 	interceptor   UnaryClientInterceptor // Chained interceptors
 	js            jetstream.JetStream    // Optional JetStream for KV/ObjectStore reads
+	timeout       time.Duration          // Unary deadline from WithClientTimeout
+	timeoutFunc   ClientTimeoutFunc      // Per-method unary deadline
 }
 
 // NewStreamDemoServiceNatsClient creates a new NATS client for StreamDemoService.
@@ -963,14 +965,29 @@ func NewStreamDemoServiceNatsClient(nc *nats.Conn, opts ...NatsClientOption) Str
 		useJSON:       false,
 		interceptor:   chainedInterceptor,
 		js:            cfg.js,
+		timeout:       cfg.timeout,
+		timeoutFunc:   cfg.timeoutFunc,
 	}
 	return c
+}
+
+// timeoutFor is the unary deadline for method.
+// A timeout func that returns a positive duration wins over the client-wide timeout.
+func (c *StreamDemoServiceNatsClient) timeoutFor(method string) time.Duration {
+	if c.timeoutFunc != nil {
+		if d := c.timeoutFunc(method); d > 0 {
+			return d
+		}
+	}
+	return c.timeout
 }
 
 // Ping sends a Ping request to the service via NATS.
 // Returns an error if the request fails or the service returns an error.
 func (c *StreamDemoServiceNatsClient) Ping(ctx context.Context, req *PingRequest) (*PingResponse, error) {
 	method := "Ping"
+	// One deadline for every invoker call in this method, including retries.
+	callDeadline, hasCallDeadline := clientCallDeadline(c.timeoutFor(method))
 
 	// Pointer to store response headers - stored in context so invoker can update it
 	responseHeadersPtr := &nats.Header{}
@@ -981,6 +998,9 @@ func (c *StreamDemoServiceNatsClient) Ping(ctx context.Context, req *PingRequest
 
 	// Define the invoker function that performs the actual NATS call
 	invoker := func(invokerCtx context.Context, method string, request, reply interface{}) error {
+		invokerCtx, cancel := clientCallContext(invokerCtx, callDeadline, hasCallDeadline)
+		defer cancel()
+
 		subject := c.subjectPrefix + ".ping"
 
 		// Marshal request
