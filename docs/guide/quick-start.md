@@ -58,15 +58,16 @@ import (
     "os/signal"
 
     "github.com/nats-io/nats.go"
+    "google.golang.org/protobuf/proto"
     greeterv1 "example/gen/greeter/v1"
 )
 
 type greeterService struct{}
 
 func (s *greeterService) SayHello(ctx context.Context, req *greeterv1.HelloRequest) (*greeterv1.HelloResponse, error) {
-    return &greeterv1.HelloResponse{
-        Greeting: "Hello, " + req.Name + "!",
-    }, nil
+    return greeterv1.HelloResponse_builder{
+        Greeting: proto.String("Hello, " + req.GetName() + "!"),
+    }.Build(), nil
 }
 
 func main() {
@@ -92,6 +93,7 @@ import (
     "fmt"
 
     "github.com/nats-io/nats.go"
+    "google.golang.org/protobuf/proto"
     greeterv1 "example/gen/greeter/v1"
 )
 
@@ -101,14 +103,14 @@ func main() {
 
     client := greeterv1.NewGreeterServiceNatsClient(nc)
 
-    resp, err := client.SayHello(context.Background(), &greeterv1.HelloRequest{
-        Name: "World",
-    })
+    resp, err := client.SayHello(context.Background(), greeterv1.HelloRequest_builder{
+        Name: proto.String("World"),
+    }.Build())
     if err != nil {
         panic(err)
     }
 
-    fmt.Println(resp.Greeting) // "Hello, World!"
+    fmt.Println(resp.GetGreeting()) // "Hello, World!"
 }
 ```
 

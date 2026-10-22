@@ -536,8 +536,8 @@ type StreamDemoServiceNats interface {
 ```go
 // Server-streaming: emit numbers one at a time
 func (s *myService) CountUp(ctx context.Context, req *CountUpRequest, stream *StreamDemoService_CountUp_Stream) error {
-    for i := int32(0); i < req.Count; i++ {
-        if err := stream.Send(&CountUpResponse{Number: req.Start + i}); err != nil {
+    for i := int32(0); i < req.GetCount(); i++ {
+        if err := stream.Send(CountUpResponse_builder{Number: proto.Int32(req.GetStart() + i)}.Build()); err != nil {
             return err
         }
     }
@@ -553,10 +553,10 @@ func (s *myService) Sum(ctx context.Context, stream *StreamDemoService_Sum_Strea
         if err != nil {
             break // EOF or stream ended
         }
-        total += msg.Value
+        total += msg.GetValue()
         count++
     }
-    return &SumResponse{Total: total, Count: count}, nil
+    return SumResponse_builder{Total: proto.Int64(total), Count: proto.Int32(count)}.Build(), nil
 }
 
 // Bidi: echo messages back
@@ -566,7 +566,10 @@ func (s *myService) Chat(ctx context.Context, stream *StreamDemoService_Chat_Str
         if err != nil {
             break
         }
-        stream.Send(&ChatMessage{User: "server", Text: "echo: " + msg.Text})
+        stream.Send(ChatMessage_builder{
+            User: proto.String("server"),
+            Text: proto.String("echo: " + msg.GetText()),
+        }.Build())
     }
     return nil
 }
@@ -578,26 +581,26 @@ func (s *myService) Chat(ctx context.Context, stream *StreamDemoService_Chat_Str
 client := NewStreamDemoServiceNatsClient(nc)
 
 // Server-streaming
-stream, _ := client.CountUp(ctx, &CountUpRequest{Start: 1, Count: 5})
+stream, _ := client.CountUp(ctx, CountUpRequest_builder{Start: proto.Int32(1), Count: proto.Int32(5)}.Build())
 for {
     resp, err := stream.Recv(ctx)
     if err != nil { break } // EOF
-    fmt.Println(resp.Number)
+    fmt.Println(resp.GetNumber())
 }
 stream.Close()
 
 // Client-streaming
 sumStream, _ := client.Sum(ctx)
-sumStream.Send(&SumRequest{Value: 10})
-sumStream.Send(&SumRequest{Value: 20})
+sumStream.Send(SumRequest_builder{Value: proto.Int64(10)}.Build())
+sumStream.Send(SumRequest_builder{Value: proto.Int64(20)}.Build())
 result, _ := sumStream.CloseAndRecv(ctx)
-fmt.Println(result.Total) // 30
+fmt.Println(result.GetTotal()) // 30
 
 // Bidi streaming
 chatStream, _ := client.Chat(ctx)
-chatStream.Send(&ChatMessage{User: "me", Text: "hello"})
+chatStream.Send(ChatMessage_builder{User: proto.String("me"), Text: proto.String("hello")}.Build())
 reply, _ := chatStream.Recv(ctx)
-fmt.Println(reply.Text) // "echo: hello"
+fmt.Println(reply.GetText()) // "echo: hello"
 chatStream.CloseSend()
 ```
 

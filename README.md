@@ -223,6 +223,7 @@ package main
 
 import (
     "context"
+    "google.golang.org/protobuf/proto"
     orderv1 "yourmodule/gen/order/v1"
 )
 
@@ -234,25 +235,25 @@ func (s *orderService) CreateOrder(
     ctx context.Context,
     req *orderv1.CreateOrderRequest,
 ) (*orderv1.CreateOrderResponse, error) {
-    order := &orderv1.Order{
-        Id:         generateID(),
-        CustomerId: req.CustomerId,
-        Items:      req.Items,
-        Status:     orderv1.OrderStatus_PENDING,
-    }
-    s.orders[order.Id] = order
-    return &orderv1.CreateOrderResponse{Order: order}, nil
+    order := orderv1.Order_builder{
+        Id:         proto.String(generateID()),
+        CustomerId: proto.String(req.GetCustomerId()),
+        Items:      req.GetItems(),
+        Status:     orderv1.OrderStatus_PENDING.Enum(),
+    }.Build()
+    s.orders[order.GetId()] = order
+    return orderv1.CreateOrderResponse_builder{Order: order}.Build(), nil
 }
 
 func (s *orderService) GetOrder(
     ctx context.Context,
     req *orderv1.GetOrderRequest,
 ) (*orderv1.GetOrderResponse, error) {
-    order, exists := s.orders[req.Id]
+    order, exists := s.orders[req.GetId()]
     if !exists {
         return nil, errors.New("order not found")
     }
-    return &orderv1.GetOrderResponse{Order: order}, nil
+    return orderv1.GetOrderResponse_builder{Order: order}.Build(), nil
 }
 ```
 
@@ -303,6 +304,7 @@ package main
 import (
     "context"
     "github.com/nats-io/nats.go"
+    "google.golang.org/protobuf/proto"
     orderv1 "yourmodule/gen/order/v1"
 )
 
@@ -316,18 +318,21 @@ func main() {
     client := orderv1.NewOrderServiceNatsClient(nc)
 
     resp, err := client.CreateOrder(context.Background(),
-        &orderv1.CreateOrderRequest{
-            CustomerId: "user-123",
+        orderv1.CreateOrderRequest_builder{
+            CustomerId: proto.String("user-123"),
             Items: []*orderv1.OrderItem{
-                {ProductId: "prod-456", Quantity: 2},
+                orderv1.OrderItem_builder{
+                    ProductId: proto.String("prod-456"),
+                    Quantity:  proto.Int32(2),
+                }.Build(),
             },
-        },
+        }.Build(),
     )
     if err != nil {
         log.Fatal(err)
     }
 
-    fmt.Printf("Created order: %s\n", resp.Order.Id)
+    fmt.Printf("Created order: %s\n", resp.GetOrder().GetId())
 }
 ```
 
@@ -756,7 +761,7 @@ Planned: Rust, Python
 **Client-side:**
 
 ```go
-product, err := client.GetProduct(ctx, &productv1.GetProductRequest{Id: "123"})
+product, err := client.GetProduct(ctx, productv1.GetProductRequest_builder{Id: proto.String("123")}.Build())
 if productv1.IsProductServiceNotFound(err) {
     // Handle not found
 }
