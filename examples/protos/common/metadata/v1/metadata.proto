@@ -1,13 +1,15 @@
-syntax = "proto3";
+edition = "2026";
 
 package common.metadata.v1;
 
 import "common/types/v1/timestamp.proto";
+import "google/protobuf/go_features.proto";
 
 option go_package = "example/gen/common/metadata/v1";
+option features.(pb.go).api_level = API_OPAQUE;
 
 // Metadata tracks creation and modification info
-message Metadata {
+export message Metadata {
   common.types.v1.Timestamp created_at = 1;
   common.types.v1.Timestamp updated_at = 2;
   string created_by = 3;

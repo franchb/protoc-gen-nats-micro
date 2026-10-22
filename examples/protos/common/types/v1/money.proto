@@ -1,11 +1,14 @@
-syntax = "proto3";
+edition = "2026";
 
 package common.types.v1;
 
+import "google/protobuf/go_features.proto";
+
 option go_package = "example/gen/common/types/v1";
+option features.(pb.go).api_level = API_OPAQUE;
 
 // Money represents a monetary amount
-message Money {
+export message Money {
   string currency_code = 1; // USD, EUR, etc.
   int64 units = 2;          // Whole units (dollars)
   int32 nanos = 3;          // Fractional units (cents)

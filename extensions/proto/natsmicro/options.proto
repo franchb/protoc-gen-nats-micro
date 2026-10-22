@@ -1,14 +1,16 @@
-syntax = "proto3";
+edition = "2026";
 
 package natsmicro;
 
 import "google/protobuf/descriptor.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/go_features.proto";
 
 option go_package = "github.com/franchb/protoc-gen-nats-micro/gen/nats/micro";
+option features.(pb.go).api_level = API_OPAQUE;
 
 // Service-level options for NATS microservices
-message ServiceOptions {
+export message ServiceOptions {
   // The NATS subject prefix for all endpoints in this service
   // Optional: defaults to snake_case of service name (e.g., "product_service")
   string subject_prefix = 1;
@@ -52,7 +54,7 @@ message ServiceOptions {
 }
 
 // Endpoint-level options for individual RPC methods
-message EndpointOptions {
+export message EndpointOptions {
   // Request timeout (optional, 0 means use service default)
   // Overrides the service-level timeout for this specific endpoint
   google.protobuf.Duration timeout = 1;
@@ -81,20 +83,20 @@ message EndpointOptions {
 // When set, the server handler automatically persists the response
 // into a NATS JetStream KV bucket after processing.
 // The bucket is auto-created during service registration if it doesn't exist.
-enum KVWriteMode {
+export enum KVWriteMode {
   KV_WRITE_MODE_UNSPECIFIED = 0;
   KV_WRITE_MODE_LAST_WRITE_WINS = 1;
   KV_WRITE_MODE_COMPARE_AND_SET = 2;
   KV_WRITE_MODE_CREATE_ONLY = 3;
 }
 
-enum KVPersistFailurePolicy {
+export enum KVPersistFailurePolicy {
   KV_PERSIST_FAILURE_POLICY_UNSPECIFIED = 0;
   KV_PERSIST_FAILURE_POLICY_BEST_EFFORT = 1;
   KV_PERSIST_FAILURE_POLICY_REQUIRED = 2;
 }
 
-message KVStoreOptions {
+export message KVStoreOptions {
   // KV bucket name (e.g., "user_profiles")
   string bucket = 1;
 
@@ -146,7 +148,7 @@ message KVStoreOptions {
 // When set, the handler stores/retrieves large binary objects
 // from a NATS JetStream Object Store bucket.
 // The bucket is auto-created during service registration if it doesn't exist.
-message ObjectStoreOptions {
+export message ObjectStoreOptions {
   // Object store bucket name (e.g., "firmware_binaries")
   string bucket = 1;
 
@@ -169,7 +171,7 @@ message ObjectStoreOptions {
 }
 
 // Streaming options for fine-tuning streaming RPC behavior
-message StreamOptions {
+export message StreamOptions {
   // Max concurrent in-flight messages (backpressure, 0 = unlimited)
   int32 max_inflight = 1;
 
@@ -178,7 +180,7 @@ message StreamOptions {
 }
 
 // Chunked I/O helpers for simple blob transfer over streaming RPCs.
-message ChunkedIOOptions {
+export message ChunkedIOOptions {
   // Name of the bytes field carrying each payload chunk.
   string chunk_field = 1;
 

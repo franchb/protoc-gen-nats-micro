@@ -1,11 +1,13 @@
-syntax = "proto3";
+edition = "2026";
 
 package example.v1;
 
 import "google/api/annotations.proto";
+import "google/protobuf/go_features.proto";
 import "natsmicro/options.proto";
 
 option go_package = "example/gen/example/v1";
+option features.(pb.go).api_level = API_OPAQUE;
 
 // ExampleService demonstrates using all default values
 // No explicit service options - everything uses defaults:
