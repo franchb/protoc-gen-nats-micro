@@ -6,7 +6,7 @@ require (
 	github.com/franchb/protoc-gen-nats-micro v0.0.0-00010101000000-000000000000
 	github.com/nats-io/nats.go v1.54.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc
-	google.golang.org/protobuf v1.36.12
+	google.golang.org/protobuf v1.37.0-rc.1
 )
 
 require (
