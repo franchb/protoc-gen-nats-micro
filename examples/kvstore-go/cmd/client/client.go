@@ -7,6 +7,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"google.golang.org/protobuf/proto"
 
 	kvdemov1 "example/gen/kvstore_demo/v1"
 )
@@ -47,19 +48,19 @@ func main() {
 	// ========================================================================
 	log.Println("\n→ Step 1: SaveProfile via RPC (server auto-persists to KV)")
 
-	profile, err := client.SaveProfile(ctx, &kvdemov1.SaveProfileRequest{
-		Id:    "123",
-		Name:  "Alice",
-		Email: "alice@example.com",
-		Bio:   "Distributed systems engineer",
-	})
+	profile, err := client.SaveProfile(ctx, kvdemov1.SaveProfileRequest_builder{
+		Id:    proto.String("123"),
+		Name:  proto.String("Alice"),
+		Email: proto.String("alice@example.com"),
+		Bio:   proto.String("Distributed systems engineer"),
+	}.Build())
 	if err != nil {
 		log.Fatalf("SaveProfile failed: %v", err)
 	}
 	log.Printf("✓ Profile saved:")
-	log.Printf("  ID:    %s", profile.Id)
-	log.Printf("  Name:  %s", profile.Name)
-	log.Printf("  Email: %s", profile.Email)
+	log.Printf("  ID:    %s", profile.GetId())
+	log.Printf("  Name:  %s", profile.GetName())
+	log.Printf("  Email: %s", profile.GetEmail())
 
 	// ========================================================================
 	// Step 2: Read the profile DIRECTLY from KV — no RPC needed!
@@ -73,10 +74,10 @@ func main() {
 		log.Fatalf("GetSaveProfileFromKV failed: %v", err)
 	}
 	log.Printf("✓ Profile from KV cache:")
-	log.Printf("  ID:    %s", cachedProfile.Id)
-	log.Printf("  Name:  %s", cachedProfile.Name)
-	log.Printf("  Email: %s", cachedProfile.Email)
-	log.Printf("  Bio:   %s", cachedProfile.Bio)
+	log.Printf("  ID:    %s", cachedProfile.GetId())
+	log.Printf("  Name:  %s", cachedProfile.GetName())
+	log.Printf("  Email: %s", cachedProfile.GetEmail())
+	log.Printf("  Bio:   %s", cachedProfile.GetBio())
 
 	// ========================================================================
 	// Step 3: Generate a report via RPC
@@ -84,19 +85,19 @@ func main() {
 	// ========================================================================
 	log.Println("\n→ Step 3: GenerateReport via RPC (server auto-persists to Object Store)")
 
-	report, err := client.GenerateReport(ctx, &kvdemov1.GenerateReportRequest{
-		Id:     "456",
-		Title:  "Q4 Revenue Report",
-		Format: "pdf",
-	})
+	report, err := client.GenerateReport(ctx, kvdemov1.GenerateReportRequest_builder{
+		Id:     proto.String("456"),
+		Title:  proto.String("Q4 Revenue Report"),
+		Format: proto.String("pdf"),
+	}.Build())
 	if err != nil {
 		log.Fatalf("GenerateReport failed: %v", err)
 	}
 	log.Printf("✓ Report generated:")
-	log.Printf("  ID:    %s", report.Id)
-	log.Printf("  Title: %s", report.Title)
-	log.Printf("  Type:  %s", report.ContentType)
-	log.Printf("  Size:  %d bytes", report.SizeBytes)
+	log.Printf("  ID:    %s", report.GetId())
+	log.Printf("  Title: %s", report.GetTitle())
+	log.Printf("  Type:  %s", report.GetContentType())
+	log.Printf("  Size:  %d bytes", report.GetSizeBytes())
 
 	// ========================================================================
 	// Step 4: Read the report DIRECTLY from Object Store — no RPC needed!
@@ -108,9 +109,9 @@ func main() {
 		log.Fatalf("GetGenerateReportFromObjectStore failed: %v", err)
 	}
 	log.Printf("✓ Report from Object Store cache:")
-	log.Printf("  ID:    %s", cachedReport.Id)
-	log.Printf("  Title: %s", cachedReport.Title)
-	log.Printf("  Size:  %d bytes", cachedReport.SizeBytes)
+	log.Printf("  ID:    %s", cachedReport.GetId())
+	log.Printf("  Title: %s", cachedReport.GetTitle())
+	log.Printf("  Size:  %d bytes", cachedReport.GetSizeBytes())
 
 	// ========================================================================
 	// Step 5: Normal RPC without KV — GetProfile is a standard unary RPC
@@ -118,13 +119,13 @@ func main() {
 	// ========================================================================
 	log.Println("\n→ Step 5: GetProfile via normal RPC (no KV)")
 
-	gotProfile, err := client.GetProfile(ctx, &kvdemov1.GetProfileRequest{Id: "123"})
+	gotProfile, err := client.GetProfile(ctx, kvdemov1.GetProfileRequest_builder{Id: proto.String("123")}.Build())
 	if err != nil {
 		log.Fatalf("GetProfile failed: %v", err)
 	}
 	log.Printf("✓ Profile from RPC:")
-	log.Printf("  ID:    %s", gotProfile.Id)
-	log.Printf("  Name:  %s", gotProfile.Name)
+	log.Printf("  ID:    %s", gotProfile.GetId())
+	log.Printf("  Name:  %s", gotProfile.GetName())
 
 	log.Println("\n✅ All done! KV and Object Store features working!")
 	log.Println("\n💡 Key insight:")
