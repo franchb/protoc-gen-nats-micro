@@ -653,9 +653,14 @@ chatStream.CloseSend()
 Minimal configuration with defaults:
 
 ```protobuf
-syntax = "proto3";
+edition = "2026";
+
 package hello.v1;
+
+import "google/protobuf/go_features.proto";
 import "natsmicro/options.proto";
+
+option features.(pb.go).api_level = API_OPAQUE;
 
 service GreeterService {
   option (natsmicro.service) = {
@@ -678,10 +683,15 @@ Results in:
 Full configuration with timeouts and metadata:
 
 ```protobuf
-syntax = "proto3";
+edition = "2026";
+
 package product.v1;
+
+import "google/protobuf/go_features.proto";
 import "natsmicro/options.proto";
 import "google/protobuf/duration.proto";
+
+option features.(pb.go).api_level = API_OPAQUE;
 
 service ProductService {
   option (natsmicro.service) = {
@@ -809,9 +819,14 @@ Instead of binary protobuf.
 Auto-persist RPC responses to NATS JetStream:
 
 ```protobuf
-syntax = "proto3";
+edition = "2026";
+
 package kvstore_demo.v1;
+
+import "google/protobuf/go_features.proto";
 import "natsmicro/options.proto";
+
+option features.(pb.go).api_level = API_OPAQUE;
 
 service KVStoreDemoService {
   option (natsmicro.service) = {

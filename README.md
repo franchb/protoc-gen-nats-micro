@@ -88,13 +88,16 @@ go install github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro@
 
 Signed binary releases are also available on the [Releases page](https://github.com/franchb/protoc-gen-nats-micro/releases).
 
-### Vendored Proto Options
+### Proto options
 
-Copy `extensions/proto/natsmicro/options.proto` from this repo into your project at `protos/natsmicro/options.proto`. Keep `import "natsmicro/options.proto";` in your service protos and run `buf generate` against your local proto tree.
+Copy `extensions/proto/natsmicro/options.proto` into your project at `protos/natsmicro/options.proto`. Keep `import "natsmicro/options.proto";` in your service protos. The file is edition 2026 and sets `features.(pb.go).api_level = API_OPAQUE`, so Go code generated from it is opaque. Generation needs Buf v1.75.0 or newer and `protoc-gen-go` v1.37.0-rc.1 or a later release that supports edition 2026.
 
-This repo vendors the upstream `google/api` protos locally under
-`third_party/googleapis`, so its own `buf generate` flow does not depend on the
-`buf.build/googleapis/googleapis` registry module.
+When a service imports `google/api/annotations.proto`, depend on the Buf module instead of vendoring it:
+
+```yaml
+deps:
+  - buf.build/googleapis/googleapis
+```
 
 ### Generate Code
 
@@ -126,13 +129,16 @@ go run ./examples/complex-client
 ### 1. Define Service in Protobuf
 
 ```protobuf
-syntax = "proto3";
+edition = "2026";
 
 package order.v1;
 
+import "google/protobuf/go_features.proto";
 import "natsmicro/options.proto";
 import "google/api/annotations.proto";
 import "google/protobuf/duration.proto";
+
+option features.(pb.go).api_level = API_OPAQUE;
 
 service OrderService {
   option (natsmicro.service) = {

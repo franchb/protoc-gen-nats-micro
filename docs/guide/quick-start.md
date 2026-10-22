@@ -6,13 +6,15 @@ Build a working NATS microservice in 5 minutes.
 
 ```protobuf
 // protos/greeter/v1/service.proto
-syntax = "proto3";
+edition = "2026";
 
 package greeter.v1;
 
+import "google/protobuf/go_features.proto";
 import "natsmicro/options.proto";
 
 option go_package = "example/gen/greeter/v1";
+option features.(pb.go).api_level = API_OPAQUE;
 
 service GreeterService {
   option (natsmicro.service) = {
