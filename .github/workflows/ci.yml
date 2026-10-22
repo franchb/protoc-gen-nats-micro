@@ -41,6 +41,14 @@ jobs:
       - name: Build root module
         run: go build ./...
 
+      - name: Install Buf v1.75.0
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/buf" \
+            "https://github.com/bufbuild/buf/releases/download/v1.75.0/buf-Linux-x86_64"
+          chmod +x "$RUNNER_TEMP/buf"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/buf" --version
+
       - name: Run tests with coverage
         working-directory: tools/protoc-gen-nats-micro
         run: go test -race -count=1 -coverprofile=coverage.out ./...
