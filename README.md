@@ -2,131 +2,138 @@
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/franchb/protoc-gen-nats-micro)](https://github.com/franchb/protoc-gen-nats-micro)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/franchb/protoc-gen-nats-micro)](https://github.com/franchb/protoc-gen-nats-micro/releases/tag/v0.3.0)
 
-> **Fork of [Toyz/protoc-gen-nats-micro](https://github.com/Toyz/protoc-gen-nats-micro)** — experimental, always a step ahead. PRs are backported to upstream.
+> Fork of [Toyz/protoc-gen-nats-micro](https://github.com/Toyz/protoc-gen-nats-micro). Experimental, and usually a step ahead of upstream. PRs from this repo are backported there.
 
-A Protocol Buffers compiler plugin that generates type-safe NATS microservice code using the official `nats.io/micro` framework.
+A Protocol Buffers compiler plugin that generates type-safe [NATS microservices](https://github.com/nats-io/nats.go/tree/main/micro) from `.proto` files.
 
-## Overview
+**v0.3.0** is the Go release for Protobuf edition 2026 and the opaque Go API.
 
-Write standard `.proto` files, run `buf generate`, get production-ready NATS microservices with automatic service discovery, load balancing, and zero configuration.
+## Go, edition 2026, and the opaque API
 
-**This plugin generates:** NATS microservice code (server interfaces, clients, error handling)
+The plugin accepts schemas from proto2 through edition 2026 (`EDITION_PROTO2` … `EDITION_2026`). Proto2 and proto3 inputs still generate. The schemas in this repository are edition 2026.
 
-**Demo project also includes:** gRPC, REST gateway, and OpenAPI generation to demonstrate interoperability - these are optional and not required for NATS services.
+Every first-party file starts like this:
 
-## Fork Status
+```protobuf
+edition = "2026";
 
-This is an experimental fork of [Toyz/protoc-gen-nats-micro](https://github.com/Toyz/protoc-gen-nats-micro). I backport PRs from this repo to the upstream, but this fork will always be a step ahead — unless upstream catches up enough for my needs.
+import "google/protobuf/go_features.proto";
 
-**What this fork adds over upstream:**
-
-- **Multi-language codegen** — TypeScript (Node.js), Python (asyncio), Web-TypeScript (browser via `@bufbuild/protobuf`)
-- **Server-streaming RPCs** across all supported languages
-- **Client-streaming RPCs** across all supported languages
-- **Bidirectional streaming RPCs** with header-based sequencing and flow control
-- **Chunked I/O helpers** — `io.Reader`/`io.Writer` wrappers for streaming large payloads (Go, TypeScript, Python)
-- **JetStream KV Store integration** — auto-persist RPC responses with write modes (last-write-wins, compare-and-set, create-only), TTL, compression
-- **JetStream Object Store integration** — large payload storage with auto-persist and TTL
-- **Backpressure controls** — per-endpoint pending message/byte limits, per-endpoint and per-service queue-group disable
-- **API versioning** — subject prefix isolation for running multiple versions simultaneously
-- **Custom error codes** — define application-specific error codes in proto, get typed constructors and checkers
-- **Client and server interceptors** — middleware with bidirectional header propagation
-- **Package-level shared types** — one shared file per proto package eliminates duplication
-- **Comprehensive documentation** — VitePress docs site with guides for streaming, KV/Object Store, interceptors, error handling
-- **Signed binary releases** (planned)
-
-## Motivation
-
-Existing NATS code generation tools like [nRPC](https://github.com/nats-rpc/nrpc) were abandoned and didn't integrate with the official `nats.io/micro` framework.
-
-**Key features:**
-
-- Official micro.Service framework integration
-- Type-safe error handling and context propagation
-- Multi-level timeout configuration via `google.protobuf.Duration`
-- Service/endpoint metadata and interceptors
-- Multi-language support (Go, TypeScript, Rust planned)
-
-**vs nRPC**: Active maintenance, official micro.Service API, modern idioms, configurable timeouts
-
-**vs gRPC**: Better for internal microservices - built-in service discovery/load balancing, no service mesh needed
-
-## Features
-
-- **Zero configuration** - Service metadata defined in proto files
-- **Type-safe code** - Compile-time safety for requests/responses/errors
-- **Configurable timeouts** - Service, endpoint, and runtime levels via `google.protobuf.Duration`
-- **Metadata** - Service and endpoint-level for discovery and operations
-- **Interceptors** - Middleware for logging, auth, tracing (client and server)
-- **Headers** - Bidirectional header propagation (request and response)
-- **Package-level shared types** - One shared file per package eliminates duplication
-- **Skip support** - Exclude services or endpoints from generation
-- **Multi-language** - Go, TypeScript (Rust planned)
-- **Standard tooling** - Works with `buf`, `protoc`, existing workflows
-- **Automatic service discovery** - Via NATS, no external dependencies
-- **Built-in load balancing** - NATS queue groups
-- **KV/Object Store helpers** - Auto-persist RPC responses to JetStream KV and Object Store
-- **Backpressure controls** - Per-endpoint pending limits and optional queue-group disable
-- **API versioning** - Subject prefix isolation
-- **Chunked blob helpers** - Go `io.Reader` / `io.Writer` helpers for streaming large payloads
-
-## Quick Start
-
-### Prerequisites
-
-- Go 1.27.0 or later
-- [Buf](https://buf.build/docs/installation) v2
-- [Task](https://taskfile.dev) (optional, for convenience)
-- NATS server (Docker or local)
-
-### Installation
-
-```bash
-go install github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro@latest
+option features.(pb.go).api_level = API_OPAQUE;
 ```
 
-Signed binary releases are also available on the [Releases page](https://github.com/franchb/protoc-gen-nats-micro/releases).
+`API_OPAQUE` is the Go API those files generate. `protoc-gen-go` v1.37.0-rc.1 hides struct fields and emits builders and accessors:
 
-### Proto options
+- Build a message with `Order_builder{...}.Build()`.
+- Singular scalars and explicit-presence enums are pointers on the builder: `proto.String`, `proto.Int32`, `proto.Int64`, `proto.Bool`, and `Status_PENDING.Enum()`.
+- Repeated fields, maps, and nested messages are passed through.
+- Read a field with `GetCustomerId()`. Write one on an existing message with `SetCustomerId(...)`.
+- A nil builder field is unset and is omitted on the wire. A set zero is serialized. That is edition explicit presence. These files do not set `features.field_presence`.
 
-Copy `extensions/proto/natsmicro/options.proto` into your project at `protos/natsmicro/options.proto`. Keep `import "natsmicro/options.proto";` in your service protos. The file is edition 2026 and sets `features.(pb.go).api_level = API_OPAQUE`, so Go code generated from it is opaque. Generation needs Buf v1.75.0 or newer and `protoc-gen-go` v1.37.0-rc.1 or a later release that supports edition 2026.
+Edition 2026 also defaults to `STRICT` symbol visibility and `STYLE2026` names. `export` is only on types that another file references (`Money`, `Status`, the NATS option messages, and the other shared types). Request and response messages stay local to their file.
 
-When a service imports `google/api/annotations.proto`, depend on the Buf module instead of vendoring it:
+Generate Go with:
+
+| Tool | Version |
+| --- | --- |
+| Go | 1.27.0 or later |
+| Buf | 1.75.0 or later (edition 2026 and well-known types at Protobuf 36.2) |
+| `protoc-gen-go` | v1.37.0-rc.1 or a later release that supports edition 2026. v1.36 stops at edition 2024. |
+| `google.golang.org/protobuf` | v1.37.0-rc.1, the module this repo requires |
+
+`google/api/annotations.proto` stays proto3. An edition 2026 file may import it. Depend on the Buf module instead of vendoring it:
 
 ```yaml
+version: v2
 deps:
   - buf.build/googleapis/googleapis
 ```
 
-### Generate Code
+Well-known types (`google/protobuf/go_features.proto`, `duration.proto`, `descriptor.proto`) come with protoc. They are not a Buf dependency.
+
+### Other languages
+
+The plugin also has TypeScript, browser TypeScript (`web-ts`), and Python templates. Edition 2026 support depends on the protobuf compiler beside this plugin:
+
+- **Go** is the supported path for these schemas. `task generate:go` is the command to run.
+- **Python** generation uses protoc's builtin `python` and `pyi` plugins. It accepts edition 2026 when `protoc` on `PATH` is 36.2 or newer. Older protoc stops with `Unrecognized syntax: editions`.
+- **TypeScript** (`protoc-gen-ts` from `@protobuf-ts/plugin`) does not advertise edition support. `task generate:ts` does not succeed against the edition 2026 schemas in this repo. The protos stay on edition 2026.
+
+## What the generator emits
+
+From a service proto, `protoc-gen-nats-micro` writes:
+
+- a server interface and `Register*Handlers`
+- a typed NATS client
+- streaming helpers when the RPC is streaming
+- package-level shared types (`shared_nats.pb.go`): errors, register options, client options
+- optional JetStream KV and Object Store persistence
+- chunked upload and download helpers when `chunked_io` is set
+
+`protoc-gen-go` writes the messages (`service.pb.go`). For an `API_OPAQUE` file, chunked Go uploads call `Set*` in one file with no build tag. Open and hybrid files keep the `protoopaque` build-tag pair.
+
+The example Buf config also emits gRPC, a REST gateway, and OpenAPI so the demo can show those side by side. A NATS service does not need them.
+
+## Features
+
+- Service and endpoint metadata, timeouts, and subject prefixes live in the proto
+- Typed errors, including custom `error_codes` from the proto
+- Client and server interceptors, with request and response headers
+- Server-streaming, client-streaming, and bidirectional streaming
+- Chunked `io.Reader` / `io.Writer` helpers for large payloads
+- JetStream KV and Object Store persistence, with write modes, TTL, and compression
+- Per-endpoint pending limits and optional queue-group disable
+- Several API versions on one connection, isolated by subject prefix
+- One shared Go file per proto package
+
+## Quick start
+
+### Prerequisites
+
+- Go 1.27.0 or later
+- [Buf](https://buf.build/docs/installation) 1.75.0 or later
+- `protoc-gen-go` v1.37.0-rc.1
+- NATS server (Docker or local)
+- [Task](https://taskfile.dev) if you want the repo commands
+
+### Install
 
 ```bash
-# Generate NATS code (Go + TypeScript)
-task generate
-
-# Or use buf directly
-buf generate
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.37.0-rc.1
+go install github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro@v0.3.0
 ```
 
-**Note:** This project's buf config also generates gRPC, REST gateway, and OpenAPI for demonstration purposes. For production, you only need `protoc-gen-go` and `protoc-gen-nats-micro`.
+`@latest` follows the default branch. Pin `@v0.3.0` when you want this release.
 
-### Run Example
+### Proto options
+
+Copy [`extensions/proto/natsmicro/options.proto`](extensions/proto/natsmicro/options.proto) to `protos/natsmicro/options.proto` in your project. Service files keep `import "natsmicro/options.proto";`.
+
+That file is edition 2026 and sets `API_OPAQUE`. Go code generated from it is opaque. Regenerating it needs the Buf and `protoc-gen-go` versions above.
+
+### Generate and run the Go example
 
 ```bash
-# Terminal 1: Start NATS
-docker run -p 4222:4222 nats
+# from the repo root
+task generate:go
 
-# Terminal 2: Start services
-go run ./examples/complex-server
+# terminal 1
+docker run --rm -p 4222:4222 nats
 
-# Terminal 3: Run client
-go run ./examples/complex-client
+# terminal 2
+go run examples/complex-go/server.go
+
+# terminal 3
+go run examples/complex-go/client.go
 ```
+
+`task run:go:server` and `task run:go:client` are the same two programs. `examples/complex-go` has two `main` packages in one directory, so build each file on its own.
 
 ## Usage
 
-### 1. Define Service in Protobuf
+### 1. Define the service
 
 ```protobuf
 edition = "2026";
@@ -146,7 +153,7 @@ service OrderService {
     name: "order_service"
     version: "1.0.0"
     description: "Order management service"
-    timeout: {seconds: 30}  // Default 30s timeout for all endpoints
+    timeout: {seconds: 30}
     metadata: {
       key: "team"
       value: "orders"
@@ -158,10 +165,6 @@ service OrderService {
       metadata: {
         key: "operation"
         value: "write"
-      }
-      metadata: {
-        key: "idempotent"
-        value: "false"
       }
     };
     option (google.api.http) = {
@@ -176,30 +179,9 @@ service OrderService {
         key: "operation"
         value: "read"
       }
-      metadata: {
-        key: "cacheable"
-        value: "true"
-      }
     };
     option (google.api.http) = {
       get: "/v1/orders/{id}"
-    };
-  }
-
-  rpc SearchOrders(SearchOrdersRequest) returns (SearchOrdersResponse) {
-    option (natsmicro.endpoint) = {
-      timeout: {seconds: 60}  // Override: 60s for search operations
-      metadata: {
-        key: "operation"
-        value: "read"
-      }
-      metadata: {
-        key: "expensive"
-        value: "true"
-      }
-    };
-    option (google.api.http) = {
-      get: "/v1/orders/search"
     };
   }
 }
@@ -213,24 +195,17 @@ message CreateOrderResponse {
   Order order = 1;
 }
 
-// ... additional messages
+// Order, OrderItem, and GetOrder* live in the same file.
+// They are local. Add `export` only if another file names them.
 ```
 
-### 2. Implement Service Interface
+Request and response messages are not exported. Services do not take `export` or `local`. The full option reference is [API.md](API.md).
+
+### 2. Implement the interface
+
+Opaque messages are built and read as follows. `google.golang.org/protobuf/proto` supplies `proto.String` and the other pointer helpers.
 
 ```go
-package main
-
-import (
-    "context"
-    "google.golang.org/protobuf/proto"
-    orderv1 "yourmodule/gen/order/v1"
-)
-
-type orderService struct {
-    orders map[string]*orderv1.Order
-}
-
 func (s *orderService) CreateOrder(
     ctx context.Context,
     req *orderv1.CreateOrderRequest,
@@ -249,8 +224,8 @@ func (s *orderService) GetOrder(
     ctx context.Context,
     req *orderv1.GetOrderRequest,
 ) (*orderv1.GetOrderResponse, error) {
-    order, exists := s.orders[req.GetId()]
-    if !exists {
+    order, ok := s.orders[req.GetId()]
+    if !ok {
         return nil, errors.New("order not found")
     }
     return orderv1.GetOrderResponse_builder{Order: order}.Build(), nil
@@ -260,111 +235,62 @@ func (s *orderService) GetOrder(
 ### 3. Register with NATS
 
 ```go
-package main
-
-import (
-    "time"
-    "github.com/nats-io/nats.go"
-    orderv1 "yourmodule/gen/order/v1"
-)
-
-func main() {
-    nc, err := nats.Connect(nats.DefaultURL)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer nc.Close()
-
-    svc := &orderService{
-        orders: make(map[string]*orderv1.Order),
-    }
-
-    // Register with configuration from proto (30s default timeout)
-    // Service automatically registered at "api.v1.order_service"
-    _, err = orderv1.RegisterOrderServiceHandlers(nc, svc)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Or override timeout at runtime
-    _, err = orderv1.RegisterOrderServiceHandlers(nc, svc,
-        orderv1.WithTimeout(45 * time.Second),
-    )
-
-    // Service is now discoverable with automatic load balancing
-    select {} // Keep running
+nc, err := nats.Connect(nats.DefaultURL)
+if err != nil {
+    log.Fatal(err)
 }
+defer nc.Close()
+
+svc := &orderService{orders: make(map[string]*orderv1.Order)}
+
+// Proto timeout is 30s. The service is registered at api.v1.order_service.
+_, err = orderv1.RegisterOrderServiceHandlers(nc, svc)
+
+// Runtime timeout replaces the proto timeout for this process.
+_, err = orderv1.RegisterOrderServiceHandlers(nc, svc,
+    orderv1.WithTimeout(45*time.Second),
+)
 ```
 
-### 4. Use Generated Client
+### 4. Call it
 
 ```go
-package main
+client := orderv1.NewOrderServiceNatsClient(nc)
 
-import (
-    "context"
-    "github.com/nats-io/nats.go"
-    "google.golang.org/protobuf/proto"
-    orderv1 "yourmodule/gen/order/v1"
+resp, err := client.CreateOrder(context.Background(),
+    orderv1.CreateOrderRequest_builder{
+        CustomerId: proto.String("user-123"),
+        Items: []*orderv1.OrderItem{
+            orderv1.OrderItem_builder{
+                ProductId: proto.String("prod-456"),
+                Quantity:  proto.Int32(2),
+            }.Build(),
+        },
+    }.Build(),
 )
-
-func main() {
-    nc, err := nats.Connect(nats.DefaultURL)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer nc.Close()
-
-    client := orderv1.NewOrderServiceNatsClient(nc)
-
-    resp, err := client.CreateOrder(context.Background(),
-        orderv1.CreateOrderRequest_builder{
-            CustomerId: proto.String("user-123"),
-            Items: []*orderv1.OrderItem{
-                orderv1.OrderItem_builder{
-                    ProductId: proto.String("prod-456"),
-                    Quantity:  proto.Int32(2),
-                }.Build(),
-            },
-        }.Build(),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    fmt.Printf("Created order: %s\n", resp.GetOrder().GetId())
+if err != nil {
+    log.Fatal(err)
 }
+fmt.Printf("Created order: %s\n", resp.GetOrder().GetId())
 ```
 
-## Generated Code
-
-**Required for NATS services:**
-
-```
-gen/order/v1/
-├── service.pb.go           # Protobuf messages (protoc-gen-go)
-├── service_nats.pb.go      # NATS service/client (protoc-gen-nats-micro)
-└── shared_nats.pb.go       # Shared types (protoc-gen-nats-micro)
-```
-
-**Demo project also generates** (optional, for comparison):
-
-- `service_grpc.pb.go` - gRPC services
-- `service.pb.gw.go` - REST gateway
-- `service.swagger.yaml` - OpenAPI specs
-
-### Package-Level Shared File
-
-Multiple services in the same package share one `shared_nats.pb.go` containing error constants, `RegisterOption`, and `NatsClientOption`. This eliminates duplication across services.
+## Generated files
 
 ```
 gen/order/v1/
-├── service_nats.pb.go         # OrderService
-├── fulfillment_nats.pb.go     # OrderFulfillmentService
-└── shared_nats.pb.go          # Shared by all services in order/v1
+├── service.pb.go        # messages, protoc-gen-go, opaque API
+├── service_nats.pb.go   # NATS server and client
+└── shared_nats.pb.go    # errors and options for the whole package
 ```
 
-### NATS Service Interface
+Two services in package `order.v1` share one `shared_nats.pb.go`:
+
+```
+gen/order/v1/
+├── service_nats.pb.go
+├── fulfillment_nats.pb.go
+└── shared_nats.pb.go
+```
 
 ```go
 type OrderServiceNats interface {
@@ -372,107 +298,51 @@ type OrderServiceNats interface {
     GetOrder(context.Context, *GetOrderRequest) (*GetOrderResponse, error)
 }
 
-func RegisterOrderService(nc *nats.Conn, impl OrderServiceNats, opts ...RegisterOption) (micro.Service, error)
-```
-
-### NATS Client
-
-```go
-type OrderServiceNatsClient struct { /* ... */ }
+func RegisterOrderServiceHandlers(nc *nats.Conn, impl OrderServiceNats, opts ...RegisterOption) (OrderServiceService, error)
 
 func NewOrderServiceNatsClient(nc *nats.Conn, opts ...NatsClientOption) *OrderServiceNatsClient
-
-func (c *OrderServiceNatsClient) CreateOrder(ctx context.Context, req *CreateOrderRequest) (*CreateOrderResponse, error)
 ```
 
-### Service Introspection
-
-Services expose an `Endpoints()` method for discovery:
+The returned service embeds `micro.Service` (`Stop`, `Info`, `Stats`) and lists endpoints:
 
 ```go
 svc, _ := productv1.RegisterProductServiceHandlers(nc, impl)
 for _, ep := range svc.Endpoints() {
     fmt.Printf("%s -> %s\n", ep.Name, ep.Subject)
 }
-
-// Client also has Endpoints()
-client := productv1.NewProductServiceNatsClient(nc)
-endpoints := client.Endpoints()
-
-// Embeds micro.Service
-svc.Stop()
-svc.Info()
-svc.Stats()
 ```
 
-## TypeScript Support
-
-Full TypeScript support with same features as Go. See [TYPESCRIPT.md](TYPESCRIPT.md) for details.
-
-```typescript
-import { connect } from "nats";
-import { ProductServiceNatsClient } from "./gen/product/v1/service_nats.pb";
-
-const nc = await connect({ servers: "nats://localhost:4222" });
-const client = new ProductServiceNatsClient(nc);
-const response = await client.getProduct({ id: "123" });
-```
+`ep.Name` and `ep.Subject` are NATS endpoint info, not protobuf fields.
 
 ## Configuration
 
-Service configuration is defined in proto files using custom options:
+Options are the `natsmicro` extensions. Snippets below assume the edition 2026 header from [Usage](#1-define-the-service) and `import "natsmicro/options.proto"`.
+
+### Timeouts
+
+Runtime wins over the endpoint, which wins over the service.
 
 ```protobuf
-import "nats/options.proto";
-import "google/protobuf/duration.proto";
+service ProductService {
+  option (natsmicro.service) = {timeout: {seconds: 30}};
 
-service OrderService {
-  option (natsmicro.service) = {
-    subject_prefix: "api.v1"
-    name: "order_service"
-    version: "1.0.0"
-    description: "Order management"
-    timeout: {seconds: 30}
-  };
-
-  rpc SlowOperation(Request) returns (Response) {
-    option (natsmicro.endpoint) = {
-      timeout: {seconds: 120}
-    };
+  rpc SearchProducts(SearchRequest) returns (SearchResponse) {
+    option (natsmicro.endpoint) = {timeout: {seconds: 60}};
   }
 }
 ```
 
-See [API.md](API.md) for complete reference of all options.
-
-### Timeout Configuration
-
-Three levels (runtime > endpoint > service):
-
 ```go
-// 1. Runtime override (highest priority)
-orderv1.RegisterOrderServiceHandlers(nc, svc,
-    orderv1.WithTimeout(45 * time.Second),
+productv1.RegisterProductServiceHandlers(nc, svc,
+    productv1.WithTimeout(45*time.Second),
 )
 ```
 
-```protobuf
-// 2. Endpoint-level (per method)
-rpc SearchProducts(...) returns (...) {
-  option (natsmicro.endpoint) = {timeout: {seconds: 60}};
-}
-
-// 3. Service-level (default)
-service ProductService {
-  option (natsmicro.service) = {timeout: {seconds: 30}};
-}
-```
-
-Server `WithTimeout` bounds the handler. It does not stop a client whose context has no deadline. Unary clients take a deadline of their own:
+`WithTimeout` bounds the handler. It does not stop a client whose context has no deadline. Unary clients take their own deadline:
 
 ```go
 client := orderv1.NewOrderServiceNatsClient(nc,
-    orderv1.WithClientTimeout(30 * time.Second),
+    orderv1.WithClientTimeout(30*time.Second),
 )
 
 // A positive result overrides WithClientTimeout for that RPC.
@@ -489,67 +359,52 @@ client = orderv1.NewOrderServiceNatsClient(nc,
 
 An earlier deadline already on the context is kept. The deadline is fixed once per unary call and applied inside each NATS invoker call, after client interceptors. A retry does not reset it. Streaming calls are unchanged.
 
-### Runtime Overrides
+### Runtime overrides
 
 ```go
 orderv1.RegisterOrderServiceHandlers(nc, svc,
     orderv1.WithSubjectPrefix("custom.prefix"),
     orderv1.WithVersion("2.0.0"),
-    orderv1.WithTimeout(45 * time.Second),
+    orderv1.WithTimeout(45*time.Second),
 )
 ```
 
 ### Metadata
 
-Metadata is configured at **service-level** (organizational info) and **endpoint-level** (operation characteristics).
-
-**Service metadata in proto:**
+Service metadata is for the deployment. Endpoint metadata describes the RPC.
 
 ```protobuf
 service ProductService {
   option (natsmicro.service) = {
     metadata: {key: "team" value: "platform"}
-    metadata: {key: "environment" value: "production"}
   };
+
+  rpc GetProduct(GetProductRequest) returns (GetProductResponse) {
+    option (natsmicro.endpoint) = {
+      metadata: {key: "operation" value: "read"}
+      metadata: {key: "cacheable" value: "true"}
+    };
+  }
 }
 ```
 
-**Runtime options:**
-
 ```go
-// Replace all metadata
+// Replace proto metadata.
 productv1.RegisterProductServiceHandlers(nc, svc,
     productv1.WithMetadata(map[string]string{"custom": "value"}),
 )
 
-// Merge with proto metadata (recommended)
+// Merge. This is the one to use for instance identity.
 productv1.RegisterProductServiceHandlers(nc, svc,
     productv1.WithAdditionalMetadata(map[string]string{
         "instance_id": uuid.New().String(),
-        "hostname":    os.Hostname(),
     }),
 )
 ```
 
-**Endpoint metadata in proto:**
+### Queue groups and pending limits
 
-```protobuf
-rpc GetProduct(...) returns (...) {
-  option (natsmicro.endpoint) = {
-    metadata: {key: "operation" value: "read"}
-    metadata: {key: "cacheable" value: "true"}
-    metadata: {key: "cache_ttl" value: "300"}
-  };
-}
-```
-
-Common patterns: operation type (`read|write|delete`), caching (`cacheable`, `cache_ttl`), performance (`expensive`), auth (`requires_auth`), versioning (`deprecated`)
-
-### Queue Groups and Pending Limits
-
-Use queue-group controls when you need plain fan-out subscriptions instead of
-the default queue-based load balancing, or when you want endpoint-level
-slow-consumer protection.
+Queue groups are how NATS load-balances a service. Disable them when every subscriber should see the message. Pending limits are slow-consumer protection and map to `micro.WithEndpointPendingLimits`.
 
 ```protobuf
 service ProductService {
@@ -563,120 +418,77 @@ service ProductService {
       pending_bytes_limit: 1048576
     };
   }
-
-  rpc BroadcastInventory(InventoryEvent) returns (google.protobuf.Empty) {
-    option (natsmicro.endpoint) = {
-      queue_group_disabled: true
-    };
-  }
 }
 ```
 
-- `queue_group_disabled` on a service disables queue subscriptions for all
-  grouped endpoints in that generated service.
-- `queue_group_disabled` on an endpoint disables queue subscriptions just for
-  that endpoint.
-- `pending_msg_limit` and `pending_bytes_limit` map to
-  `micro.WithEndpointPendingLimits(...)`. NATS may close the subscription with
-  slow-consumer semantics if those buffers are exceeded.
+An endpoint `queue_group_disabled` applies only to that RPC. A service flag applies to the grouped endpoints of that generated service.
 
-### Skip Support
-
-Exclude services or endpoints from generation:
+### Skip
 
 ```protobuf
 service AdminService {
-  option (natsmicro.service) = {skip: true};  // Skip entire service
+  option (natsmicro.service) = {skip: true};
 }
 
-rpc AdminReset(...) returns (...) {
-  option (natsmicro.endpoint) = {skip: true};  // Skip specific method
+rpc AdminReset(ResetRequest) returns (ResetResponse) {
+  option (natsmicro.endpoint) = {skip: true};
 }
 ```
 
-## API Versioning
+## API versioning
 
-Run multiple versions simultaneously via subject prefix isolation:
+Subject prefixes keep two generated versions on one connection:
 
 ```go
-import orderv1 "yourmodule/gen/order/v1"
-import orderv2 "yourmodule/gen/order/v2"
-
-orderv1.RegisterOrderServiceHandlers(nc, svcV1)  // api.v1.order_service.*
-orderv2.RegisterOrderServiceHandlers(nc, svcV2)  // api.v2.order_service.*
+orderv1.RegisterOrderServiceHandlers(nc, svcV1) // api.v1.order_service.*
+orderv2.RegisterOrderServiceHandlers(nc, svcV2) // api.v2.order_service.*
 
 clientV1 := orderv1.NewOrderServiceNatsClient(nc)
 clientV2 := orderv2.NewOrderServiceNatsClient(nc)
 ```
 
-## Interceptors and Headers
+## Interceptors and headers
 
-Interceptors provide middleware for logging, auth, metrics, and tracing.
+### Server
 
-### Server Interceptors
+Interceptors run in registration order, then the handler.
 
 ```go
 func loggingInterceptor(ctx context.Context, req interface{}, info *productv1.UnaryServerInfo, handler productv1.UnaryHandler) (interface{}, error) {
-    start := time.Now()
-
-    // Read incoming request headers
     if headers := productv1.IncomingHeaders(ctx); headers != nil {
         if traceID, ok := headers["X-Trace-Id"]; ok && len(traceID) > 0 {
             log.Printf("[%s] Trace-ID: %s", info.Method, traceID[0])
         }
     }
 
-    // Set response headers that will be sent back to client
     responseHeaders := nats.Header{}
     responseHeaders.Set("X-Server-Version", "1.0.0")
-    responseHeaders.Set("X-Request-Id", generateRequestID())
     productv1.SetResponseHeaders(ctx, responseHeaders)
 
-    // Call the actual handler
-    resp, err := handler(ctx, req)
-
-    duration := time.Since(start)
-    log.Printf("[%s] completed in %v", info.Method, duration)
-
-    return resp, err
+    return handler(ctx, req)
 }
 
-// Register with interceptor
 productv1.RegisterProductServiceHandlers(nc, impl,
+    productv1.WithServerInterceptor(authInterceptor),
     productv1.WithServerInterceptor(loggingInterceptor),
 )
 ```
 
-**Chain multiple:**
-
-```go
-productv1.RegisterProductServiceHandlers(nc, impl,
-    productv1.WithServerInterceptor(authInterceptor),
-    productv1.WithServerInterceptor(metricsInterceptor),
-    productv1.WithServerInterceptor(loggingInterceptor),
-)  // Execution: auth -> metrics -> logging -> handler
-```
-
-### Client Interceptors
+### Client
 
 ```go
 func clientLoggingInterceptor(ctx context.Context, method string, req, reply interface{}, invoker productv1.UnaryInvoker) error {
-    // Add request headers
     headers := nats.Header{}
     headers.Set("X-Trace-Id", generateTraceID())
-    headers.Set("X-Client-Version", "1.0.0")
     ctx = productv1.WithOutgoingHeaders(ctx, headers)
 
-    // Make the call
     err := invoker(ctx, method, req, reply)
 
-    // Read response headers
     if respHeaders := productv1.ResponseHeaders(ctx); respHeaders != nil {
         if serverVer, ok := respHeaders["X-Server-Version"]; ok && len(serverVer) > 0 {
             log.Printf("Server version: %s", serverVer[0])
         }
     }
-
     return err
 }
 
@@ -685,226 +497,124 @@ client := productv1.NewProductServiceNatsClient(nc,
 )
 ```
 
-### Bidirectional Headers
+Request headers go client to server with `WithOutgoingHeaders` and `IncomingHeaders`. Response headers go server to client with `SetResponseHeaders` and `ResponseHeaders`.
 
-**Request headers** (client → server):
+## Errors
 
-```go
-// Client
-ctx = productv1.WithOutgoingHeaders(ctx, headers)
-// Server
-headers := productv1.IncomingHeaders(ctx)
-```
-
-**Response headers** (server → client):
+Generated checkers match the status the handler returned:
 
 ```go
-// Server
-productv1.SetResponseHeaders(ctx, headers)
-// Client
-headers := productv1.ResponseHeaders(ctx)
-```
-
-Use cases: distributed tracing, authentication tokens, correlation IDs, versioning
-
-## Architecture
-
-### Code Generation Pipeline
-
-This plugin integrates with the standard protobuf toolchain:
-
-```
-proto files
-    ↓
-buf generate (or protoc)
-    ↓
-├── protoc-gen-go          -> messages (service.pb.go)
-└── protoc-gen-nats-micro  -> NATS (service_nats.pb.go)
-
-Optional (used in this example project):
-├── protoc-gen-go-grpc     -> gRPC (service_grpc.pb.go)
-├── protoc-gen-grpc-gateway -> REST (service.pb.gw.go)
-└── protoc-gen-openapiv2   -> OpenAPI (service.swagger.yaml)
-```
-
-### Two-Phase Build
-
-The plugin uses a two-phase build to read custom proto extensions:
-
-1. **Phase 1**: Generate extension types from `nats/options.proto`
-2. **Phase 2**: Build plugin that imports and reads those extensions
-3. **Phase 3**: Generate service code with embedded configuration
-
-This is orchestrated via `go:generate` or Task:
-
-```bash
-task generate:extensions  # Phase 1
-task build:plugin        # Phase 2
-task generate           # Phase 3
-```
-
-## Extending to Other Languages
-
-Template-based architecture. Add `<language>/` folder with templates, register in `generator/generator.go`. See [tools/protoc-gen-nats-micro/README.md](tools/protoc-gen-nats-micro/README.md).
-
-Planned: Rust, Python
-
-## Examples
-
-- `examples/complex-server` - Multi-service setup (Product, Order v1/v2)
-- `examples/complex-client` - Client usage with error handling
-- `examples/rest-gateway` - HTTP/JSON gateway (optional)
-- `examples/simple-ts` - TypeScript client/server
-
-### Error Handling
-
-**Client-side:**
-
-```go
-product, err := client.GetProduct(ctx, productv1.GetProductRequest_builder{Id: proto.String("123")}.Build())
+product, err := client.GetProduct(ctx, productv1.GetProductRequest_builder{
+    Id: proto.String("123"),
+}.Build())
 if productv1.IsProductServiceNotFound(err) {
-    // Handle not found
+    // missing product
 }
 ```
 
-**Server-side (3 options):**
-
-1. Generated error types (recommended):
+On the server, prefer a generated constructor. A plain `error` becomes `INTERNAL`.
 
 ```go
 return nil, productv1.NewProductServiceNotFoundError("GetProduct", "not found")
 ```
 
-2. Custom errors (implement `NatsErrorCode()`, `NatsErrorMessage()`, `NatsErrorData()`):
+Built-in codes: `INVALID_ARGUMENT`, `NOT_FOUND`, `ALREADY_EXISTS`, `PERMISSION_DENIED`, `UNAUTHENTICATED`, `INTERNAL`, `UNAVAILABLE`.
 
-```go
-type OutOfStockError struct { ProductID string }
-func (e *OutOfStockError) Error() string { return "out of stock" }
-func (e *OutOfStockError) NatsErrorCode() string { return productv1.ProductServiceErrCodeUnavailable }
-```
-
-3. Generic errors (become INTERNAL):
-
-```go
-return nil, fmt.Errorf("database error")
-```
-
-Built-in codes: `INVALID_ARGUMENT`, `NOT_FOUND`, `ALREADY_EXISTS`, `PERMISSION_DENIED`, `UNAUTHENTICATED`, `INTERNAL`, `UNAVAILABLE`
-
-**Custom error codes** — define application-specific codes in your proto:
+Declare more codes on the service:
 
 ```protobuf
 service OrderService {
   option (natsmicro.service) = {
-    error_codes: ["ORDER_EXPIRED", "PAYMENT_FAILED", "STOCK_UNAVAILABLE"]
+    error_codes: ["ORDER_EXPIRED", "PAYMENT_FAILED"]
   };
 }
 ```
 
-This generates typed constants, constructors, and checkers for each code:
-
 ```go
-// Server
 return nil, orderv1.NewOrderServiceOrderExpiredError("CreateOrder", "expired after 30m")
 
-// Client
 if orderv1.IsOrderServiceOrderExpired(err) {
     log.Println("Order expired, please resubmit")
 }
 ```
 
-## Development
+A hand-written error can implement `NatsErrorCode()`, `NatsErrorMessage()`, and `NatsErrorData()`.
 
-### Project Structure
+## Streaming, KV, and chunked payloads
+
+Streaming RPCs have typed helpers in Go. The guides are:
+
+- [Streaming RPC](docs/guide/streaming.md)
+- [KV and Object Store](docs/guide/kv-object-store.md)
+- [Error handling](docs/guide/error-handling.md)
+- [Interceptors](docs/guide/interceptors.md)
+
+`chunked_io` on a streaming method generates download helpers and, for a client-streaming bytes field, Go upload helpers (`SendBytes`, `SendReader`, `SendFile`). For large blobs, use a streaming RPC with one `bytes` field. Object Store is for persisting a finished message, not for replacing that stream.
+
+KV and Object Store options on an RPC tell the generated server to write the response into JetStream. Write modes include last-write-wins, compare-and-set, and create-only.
+
+## Examples
+
+| Directory | What it shows |
+| --- | --- |
+| [`examples/complex-go`](examples/complex-go) | Several services, interceptors, headers, errors. `go run server.go` and `go run client.go`. |
+| [`examples/streaming-go`](examples/streaming-go) | Unary, server-streaming, client-streaming, and bidi in Go. |
+| [`examples/kvstore-go`](examples/kvstore-go) | KV and Object Store persistence. |
+| [`examples/simple-ts`](examples/simple-ts) | TypeScript client and server. Needs a protobuf-ts build that accepts the schema edition. |
+| [`examples/simple-py`](examples/simple-py) | Python client and server. Needs `protoc` 36.2 or newer. |
+
+Schemas live in [`examples/protos`](examples/protos). NATS options live in [`extensions/proto/natsmicro/options.proto`](extensions/proto/natsmicro/options.proto).
+
+## Development
 
 ```
 .
-├── proto/                     # Protobuf definitions
-│   ├── nats/                  # NATS extension definitions
-│   ├── order/v1/              # Order service v1
-│   ├── order/v2/              # Order service v2
-│   ├── product/v1/            # Product service
-│   └── common/                # Shared types
-├── gen/                       # Generated code (gitignored)
-├── examples/                  # Example applications
-│   ├── complex-server/        # Multi-service server
-│   ├── complex-client/        # Client example
-│   ├── rest-gateway/          # HTTP/JSON gateway
-│   └── openapi-merge/         # OpenAPI spec combiner
-├── tools/
-│   └── protoc-gen-nats-micro/ # Plugin source
-│       ├── generator/         # Code generation logic
-│       │   └── templates/     # Language templates
-│       ├── main.go            # Plugin entry point
-│       └── README.md          # Plugin documentation
-├── buf.yaml                   # Buf configuration
-├── buf.gen.yaml               # Code generation config
-├── buf.gen.extensions.yaml    # Extension generation config
-└── Taskfile.yml               # Build automation
+├── extensions/proto/natsmicro/options.proto
+├── examples/protos/                 # edition 2026 schemas
+├── examples/complex-go/
+├── examples/streaming-go/
+├── examples/kvstore-go/
+├── examples/simple-ts/
+├── examples/simple-py/
+├── gen/nats/micro/options.pb.go     # generated opaque options, checked in
+├── tools/protoc-gen-nats-micro/
+│   ├── main.go
+│   └── generator/templates/
+├── buf.yaml
+├── buf.lock
+└── Taskfile.yml
 ```
 
-### Building from Source
+The plugin reads `options.proto` as generated Go, so extension types are produced first:
 
 ```bash
-# Clone repository
-git clone https://github.com/franchb/protoc-gen-nats-micro
-cd protoc-gen-nats-micro
-
-# Generate code
-task generate
-
-# Build plugin
-task build:plugin
-
-# Run tests
-task test
-
-# Clean generated files
-task clean
+task generate:extensions   # protoc-gen-go over options.proto
+task build:plugin          # compile protoc-gen-nats-micro
+task generate:go           # example Go services
+task test                  # go test ./...
 ```
 
-### Available Tasks
+`task generate` also runs the TypeScript and Python generators and continues if one of them fails. Use `task generate:go` when you only want Go.
 
-```bash
-task --list
+Other tasks: `task build:go`, `task nats`, `task run:go:server`, `task run:go:client`, `task clean`. `task --list` prints the rest.
 
-* build          Build all example applications
-* clean          Remove all generated files
-* generate       Generate all protobuf code
-* test           Run all tests
-* nats           Start NATS server in Docker
-* run:server     Run complex-server example
-* run:client     Run complex-client example
-* run:gateway    Run REST gateway
-```
-
-## Streaming
-
-Streaming RPC is supported across the generator today.
-
-- [Streaming RPC](docs/guide/streaming.md) provides typed server-streaming, client-streaming, and bidi helpers over NATS.
-- Persist whole protobuf messages with [KV & Object Store](docs/guide/kv-object-store.md) for post-RPC storage.
-- Enable `chunked_io` on streaming blob methods to generate download helpers (Go, TypeScript, Python) and upload helpers (Go only).
-
-For larger payload transfer, prefer a streaming RPC with a simple `bytes` chunk message instead of overloading `object_store`.
+To add a language, add a template directory and register it in `generator/generator.go`. See [tools/protoc-gen-nats-micro/README.md](tools/protoc-gen-nats-micro/README.md).
 
 ## Contributing
 
-Contributions welcome: language templates, observability integrations, benchmarks, interceptor examples.
+Language templates, interceptor examples, and benchmarks are welcome.
 
-## Related Projects
+## Related projects
 
-- [nats.go](https://github.com/nats-io/nats.go) - Official NATS Go client
-- [nats.go/micro](https://github.com/nats-io/nats.go/tree/main/micro) - Microservices framework
-- [buf](https://buf.build) - Modern protobuf toolchain
-- [grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway) - REST gateway for gRPC
+- [nats.go](https://github.com/nats-io/nats.go) and [nats.go/micro](https://github.com/nats-io/nats.go/tree/main/micro)
+- [buf](https://buf.build)
+- [protobuf-go](https://github.com/protocolbuffers/protobuf-go)
+- [grpc-gateway](https://github.com/grpc-ecosystem/grpc-gateway)
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT. See [LICENSE](LICENSE).
 
 ## Author
 
-Created by [Helba](https://helba.ai)
-
-A Protocol Buffers code generator for NATS microservices, integrating modern protobuf tooling with the official nats.go/micro framework.
+Upstream project by [Helba](https://helba.ai). This fork is maintained by [franchb](https://github.com/franchb).
