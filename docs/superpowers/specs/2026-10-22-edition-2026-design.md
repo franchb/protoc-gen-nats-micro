@@ -98,7 +98,7 @@ Proto2, proto3, edition 2023, edition 2024, and edition 2026 are accepted. A new
 
 The generator reads services, methods, names, and custom options through `protogen`. Service, client, and stream templates already call `Get*` or marshal whole messages. They do not change for the edition bump.
 
-Chunked `SendBytes` is the one generated field write. It is split by build tag today, which matches the hybrid API and not pure `API_OPAQUE`. Read `features.(pb.go).api_level` from the file. If the option is absent, edition 2024 and newer count as opaque, and older files count as open.
+Chunked `SendBytes` is the one generated field write. It writes the RPC input message, so the Go API is that message's resolved level: the defining file's `features.(pb.go).api_level`, then a message-level override. If neither is set, edition 2024 and newer count as opaque, and older files count as open. A service file whose chunked inputs mix those APIs emits both shapes.
 
 | Resolved API | Emitted chunked helper |
 | --- | --- |
@@ -106,7 +106,7 @@ Chunked `SendBytes` is the one generated field write. It is split by build tag t
 | Hybrid | Today's tagged pair |
 | Opaque | One untagged file, setter body only. No composite-literal file. |
 
-The setter body may be shared with the hybrid opaque template. The opaque-only output must not carry `//go:build protoopaque`.
+The setter body may be shared with the hybrid opaque template. The opaque-only output must not carry `//go:build protoopaque`. When every chunked input is opaque, that file is `*_chunked_nats.pb.go`. When the same file also has open or hybrid inputs, those keep the tagged pair and the opaque inputs are written to `*_chunked_opaque_nats.pb.go`.
 
 ## Buf dependency
 

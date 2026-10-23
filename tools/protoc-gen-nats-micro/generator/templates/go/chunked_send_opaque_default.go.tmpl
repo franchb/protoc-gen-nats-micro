@@ -1,13 +1,12 @@
-{{- /* Chunked upload helper — opaque proto mode (SendBytes only).
-       SendReader and SendFile live in the main (non-build-tagged) file
-       since they only call SendBytes and don't depend on proto API mode. */ -}}
+{{- /* Chunked upload helper — API_OPAQUE inputs (SendBytes only, no build tag).
+       SendReader and SendFile live in the main file; they only call SendBytes. */ -}}
 package {{.File.GoPackageName}}
 
 {{- range $svc := .File.Services}}
 {{- if not (GetServiceOptions $svc).Skip}}
 {{- range .Methods}}
 {{- $endpointOpts := GetEndpointOptions .}}
-{{- if and (not $endpointOpts.Skip) $endpointOpts.ChunkedIO (IsClientStreaming .) (not (IsServerStreaming .))}}
+{{- if and (not $endpointOpts.Skip) $endpointOpts.ChunkedIO (IsClientStreaming .) (not (IsServerStreaming .)) (InputIsOpaque .)}}
 
 // SendBytes sends a single payload chunk to the server.
 func (s *{{$svc.GoName}}_{{.GoName}}_ClientStream) SendBytes(data []byte) error {

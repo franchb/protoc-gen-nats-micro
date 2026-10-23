@@ -135,7 +135,165 @@ message Done { string id = 1; }
 	}
 }
 
+func TestChunkedHelperFollowsInputMessageAPI(t *testing.T) {
+	if _, err := exec.LookPath("buf"); err != nil {
+		t.Skip("buf not on PATH")
+	}
+	plugin := buildPlugin(t)
+	opts := filepath.Join(repoRootFromTest(t), "extensions", "proto", "natsmicro", "options.proto")
+
+	// Opaque service file, open chunk message defined elsewhere.
+	openInput := generateChunkedFiles(t, plugin, opts, map[string]string{
+		"chunk.proto": `syntax = "proto3";
+package fixture.v1;
+option go_package = "example.com/fixture/v1;fixturev1";
+message OpenChunk { bytes data = 1; }
+`,
+		"service.proto": `edition = "2026";
+package fixture.v1;
+import "google/protobuf/go_features.proto";
+import "natsmicro/options.proto";
+import "chunk.proto";
+option features.(pb.go).api_level = API_OPAQUE;
+option go_package = "example.com/fixture/v1;fixturev1";
+service Blob {
+  rpc Upload(stream OpenChunk) returns (Done) {
+    option (natsmicro.chunked_io) = { chunk_field: "data" };
+  }
+}
+message Done { string id = 1; }
+`,
+	})
+	openBody := mustRead(t, filepath.Join(openInput, "gen", "service_chunked_nats.pb.go"))
+	if !strings.Contains(openBody, "!protoopaque") || strings.Contains(openBody, "SetData(") {
+		t.Fatalf("open input must use the composite-literal file:\n%s", openBody)
+	}
+	tagged := mustRead(t, filepath.Join(openInput, "gen", "service_chunked_protoopaque_nats.pb.go"))
+	if !strings.Contains(tagged, "SetData(") {
+		t.Fatalf("open input must keep the protoopaque setter twin:\n%s", tagged)
+	}
+	if _, err := os.Stat(filepath.Join(openInput, "gen", "service_chunked_opaque_nats.pb.go")); !os.IsNotExist(err) {
+		t.Fatal("open-only input must not emit the mixed opaque file")
+	}
+
+	// Proto3 service file, opaque chunk message defined elsewhere.
+	opaqueInput := generateChunkedFiles(t, plugin, opts, map[string]string{
+		"chunk.proto": `edition = "2026";
+package fixture.v1;
+import "google/protobuf/go_features.proto";
+option features.(pb.go).api_level = API_OPAQUE;
+option go_package = "example.com/fixture/v1;fixturev1";
+export message OpaqueChunk { bytes data = 1; }
+`,
+		"service.proto": `syntax = "proto3";
+package fixture.v1;
+import "natsmicro/options.proto";
+import "chunk.proto";
+option go_package = "example.com/fixture/v1;fixturev1";
+service Blob {
+  rpc Upload(stream OpaqueChunk) returns (Done) {
+    option (natsmicro.chunked_io) = { chunk_field: "data" };
+  }
+}
+message Done { string id = 1; }
+`,
+	})
+	opaqueBody := mustRead(t, filepath.Join(opaqueInput, "gen", "service_chunked_nats.pb.go"))
+	if strings.Contains(opaqueBody, "go:build") || !strings.Contains(opaqueBody, "SetData(") {
+		t.Fatalf("opaque input must be an untagged setter:\n%s", opaqueBody)
+	}
+	if _, err := os.Stat(filepath.Join(opaqueInput, "gen", "service_chunked_protoopaque_nats.pb.go")); !os.IsNotExist(err) {
+		t.Fatal("opaque-only input must not emit the protoopaque twin")
+	}
+
+	// One file, three message-level APIs. Edition 2024 with no option is opaque.
+	mixed := generateChunked(t, plugin, opts, `edition = "2026";
+package fixture.v1;
+import "google/protobuf/go_features.proto";
+import "natsmicro/options.proto";
+option features.(pb.go).api_level = API_OPAQUE;
+option go_package = "example.com/fixture/v1;fixturev1";
+service Blob {
+  rpc UploadOpen(stream OpenChunk) returns (Done) {
+    option (natsmicro.chunked_io) = { chunk_field: "data" };
+  }
+  rpc UploadHybrid(stream HybridChunk) returns (Done) {
+    option (natsmicro.chunked_io) = { chunk_field: "data" };
+  }
+  rpc UploadOpaque(stream OpaqueChunk) returns (Done) {
+    option (natsmicro.chunked_io) = { chunk_field: "data" };
+  }
+  rpc UploadEdition(stream EditionChunk) returns (Done) {
+    option (natsmicro.chunked_io) = { chunk_field: "data" };
+  }
+}
+message OpenChunk {
+  option features.(pb.go).api_level = API_OPEN;
+  bytes data = 1;
+}
+message HybridChunk {
+  option features.(pb.go).api_level = API_HYBRID;
+  bytes data = 1;
+}
+message OpaqueChunk {
+  option features.(pb.go).api_level = API_OPAQUE;
+  bytes data = 1;
+}
+message EditionChunk { bytes data = 1; }
+message Done { string id = 1; }
+`)
+	// EditionChunk has no message override; the file is API_OPAQUE.
+	// A separate edition 2024 file with no option is covered below.
+	mixedOpen := mustRead(t, filepath.Join(mixed, "gen", "service_chunked_nats.pb.go"))
+	mixedTagged := mustRead(t, filepath.Join(mixed, "gen", "service_chunked_protoopaque_nats.pb.go"))
+	mixedOpaque := mustRead(t, filepath.Join(mixed, "gen", "service_chunked_opaque_nats.pb.go"))
+	if !strings.Contains(mixedOpen, "!protoopaque") {
+		t.Fatalf("mixed open file must keep !protoopaque:\n%s", mixedOpen)
+	}
+	for _, name := range []string{"UploadOpen", "UploadHybrid"} {
+		if !strings.Contains(mixedOpen, name) || !strings.Contains(mixedTagged, name) {
+			t.Fatalf("%s must be in the build-tagged pair", name)
+		}
+		if strings.Contains(mixedOpaque, name) {
+			t.Fatalf("%s must not be in the untagged opaque file:\n%s", name, mixedOpaque)
+		}
+	}
+	for _, name := range []string{"UploadOpaque", "UploadEdition"} {
+		if !strings.Contains(mixedOpaque, name) || !strings.Contains(mixedOpaque, "SetData(") {
+			t.Fatalf("%s must be an untagged setter:\n%s", name, mixedOpaque)
+		}
+		if strings.Contains(mixedOpen, name) || strings.Contains(mixedTagged, name) {
+			t.Fatalf("%s must not be in the build-tagged pair", name)
+		}
+	}
+	if strings.Contains(mixedOpaque, "go:build") {
+		t.Fatalf("mixed opaque file must be untagged:\n%s", mixedOpaque)
+	}
+
+	edition2024 := generateChunked(t, plugin, opts, `edition = "2024";
+package fixture.v1;
+import "natsmicro/options.proto";
+option go_package = "example.com/fixture/v1;fixturev1";
+service Blob {
+  rpc Upload(stream Chunk) returns (Done) {
+    option (natsmicro.chunked_io) = { chunk_field: "data" };
+  }
+}
+message Chunk { bytes data = 1; }
+message Done { string id = 1; }
+`)
+	editionBody := mustRead(t, filepath.Join(edition2024, "gen", "service_chunked_nats.pb.go"))
+	if strings.Contains(editionBody, "go:build") || !strings.Contains(editionBody, "SetData(") {
+		t.Fatalf("edition 2024 with no api_level must be an untagged setter:\n%s", editionBody)
+	}
+}
+
 func generateChunked(t *testing.T, plugin, optionsProto, service string) string {
+	t.Helper()
+	return generateChunkedFiles(t, plugin, optionsProto, map[string]string{"service.proto": service})
+}
+
+func generateChunkedFiles(t *testing.T, plugin, optionsProto string, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "natsmicro"), 0o755); err != nil {
@@ -148,7 +306,9 @@ func generateChunked(t *testing.T, plugin, optionsProto, service string) string 
 	writeFile(t, filepath.Join(root, "natsmicro", "options.proto"), string(src))
 	writeFile(t, filepath.Join(root, "buf.yaml"), "version: v2\n")
 	writeFile(t, filepath.Join(root, "buf.gen.yaml"), "version: v2\nplugins:\n  - local: "+plugin+"\n    out: gen\n    opt:\n      - paths=source_relative\n      - language=go\n")
-	writeFile(t, filepath.Join(root, "service.proto"), service)
+	for name, body := range files {
+		writeFile(t, filepath.Join(root, name), body)
+	}
 	cmd := exec.Command("buf", "generate")
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
