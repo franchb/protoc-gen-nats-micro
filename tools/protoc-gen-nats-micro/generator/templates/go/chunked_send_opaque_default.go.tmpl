@@ -1,0 +1,20 @@
+{{- /* Chunked upload helper — API_OPAQUE inputs (SendBytes only, no build tag).
+       SendReader and SendFile live in the main file; they only call SendBytes. */ -}}
+package {{.File.GoPackageName}}
+
+{{- range $svc := .File.Services}}
+{{- if not (GetServiceOptions $svc).Skip}}
+{{- range .Methods}}
+{{- $endpointOpts := GetEndpointOptions .}}
+{{- if and (not $endpointOpts.Skip) $endpointOpts.ChunkedIO (IsClientStreaming .) (not (IsServerStreaming .)) (InputIsOpaque .)}}
+
+// SendBytes sends a single payload chunk to the server.
+func (s *{{$svc.GoName}}_{{.GoName}}_ClientStream) SendBytes(data []byte) error {
+  msg := &{{$.QualifiedGoIdent .Input.GoIdent}}{}
+  msg.Set{{$endpointOpts.ChunkedIO.GoFieldName}}(data)
+  return s.Send(msg)
+}
+{{- end}}
+{{- end}}
+{{- end}}
+{{- end}}

@@ -56,34 +56,34 @@ func GetServiceOptions(service *protogen.Service) ServiceOptions {
 	// Try to read the nats.micro.service extension
 	if svcOpts, ok := getExtension[*natspb.ServiceOptions](service.Desc.Options(), natspb.E_Service); ok {
 		// Check skip first - if true, mark it and return early
-		if svcOpts.Skip {
+		if svcOpts.GetSkip() {
 			opts.Skip = true
 			return opts
 		}
 
-		if svcOpts.SubjectPrefix != "" {
-			opts.SubjectPrefix = svcOpts.SubjectPrefix
+		if svcOpts.GetSubjectPrefix() != "" {
+			opts.SubjectPrefix = svcOpts.GetSubjectPrefix()
 		}
-		if svcOpts.Name != "" {
-			opts.Name = svcOpts.Name
+		if svcOpts.GetName() != "" {
+			opts.Name = svcOpts.GetName()
 		}
-		if svcOpts.Version != "" {
-			opts.Version = svcOpts.Version
+		if svcOpts.GetVersion() != "" {
+			opts.Version = svcOpts.GetVersion()
 		}
-		if svcOpts.Description != "" {
-			opts.Description = svcOpts.Description
+		if svcOpts.GetDescription() != "" {
+			opts.Description = svcOpts.GetDescription()
 		}
-		if len(svcOpts.Metadata) > 0 {
-			opts.Metadata = svcOpts.Metadata
+		if len(svcOpts.GetMetadata()) > 0 {
+			opts.Metadata = svcOpts.GetMetadata()
 		}
-		if svcOpts.Timeout != nil {
-			opts.Timeout = svcOpts.Timeout.AsDuration()
+		if svcOpts.GetTimeout() != nil {
+			opts.Timeout = svcOpts.GetTimeout().AsDuration()
 		}
-		opts.UseJSON = svcOpts.Json
-		if len(svcOpts.ErrorCodes) > 0 {
-			opts.ErrorCodes = svcOpts.ErrorCodes
+		opts.UseJSON = svcOpts.GetJson()
+		if len(svcOpts.GetErrorCodes()) > 0 {
+			opts.ErrorCodes = svcOpts.GetErrorCodes()
 		}
-		opts.QueueGroupDisabled = svcOpts.QueueGroupDisabled
+		opts.QueueGroupDisabled = svcOpts.GetQueueGroupDisabled()
 	}
 
 	return opts
@@ -223,57 +223,57 @@ func extractEndpointOptions(method *protogen.Method) EndpointOptions {
 
 	// Endpoint options
 	if endpointOpts, ok := getExtension[*natspb.EndpointOptions](methodOpts, natspb.E_Endpoint); ok {
-		opts.Skip = endpointOpts.Skip
-		if endpointOpts.Timeout != nil {
-			opts.Timeout = endpointOpts.Timeout.AsDuration()
+		opts.Skip = endpointOpts.GetSkip()
+		if endpointOpts.GetTimeout() != nil {
+			opts.Timeout = endpointOpts.GetTimeout().AsDuration()
 		}
-		if len(endpointOpts.Metadata) > 0 {
-			opts.Metadata = endpointOpts.Metadata
+		if len(endpointOpts.GetMetadata()) > 0 {
+			opts.Metadata = endpointOpts.GetMetadata()
 		}
-		opts.QueueGroupDisabled = endpointOpts.QueueGroupDisabled
-		opts.PendingMsgLimit = endpointOpts.PendingMsgLimit
-		opts.PendingBytesLimit = endpointOpts.PendingBytesLimit
+		opts.QueueGroupDisabled = endpointOpts.GetQueueGroupDisabled()
+		opts.PendingMsgLimit = endpointOpts.GetPendingMsgLimit()
+		opts.PendingBytesLimit = endpointOpts.GetPendingBytesLimit()
 	}
 
 	// KV Store options
-	if kvOpts, ok := getExtension[*natspb.KVStoreOptions](methodOpts, natspb.E_KvStore); ok && kvOpts.Bucket != "" {
+	if kvOpts, ok := getExtension[*natspb.KVStoreOptions](methodOpts, natspb.E_KvStore); ok && kvOpts.GetBucket() != "" {
 		kv := &KVStoreOpts{
-			Bucket:               kvOpts.Bucket,
-			KeyTemplate:          kvOpts.KeyTemplate,
-			Description:          kvOpts.Description,
-			MaxHistory:           kvOpts.MaxHistory,
-			ClientOnly:           kvOpts.ClientOnly,
-			Metadata:             kvOpts.Metadata,
+			Bucket:               kvOpts.GetBucket(),
+			KeyTemplate:          kvOpts.GetKeyTemplate(),
+			Description:          kvOpts.GetDescription(),
+			MaxHistory:           kvOpts.GetMaxHistory(),
+			ClientOnly:           kvOpts.GetClientOnly(),
+			Metadata:             kvOpts.GetMetadata(),
 			WriteMode:            resolveKVWriteMode(kvOpts),
 			PersistFailurePolicy: resolveKVPersistFailurePolicy(kvOpts),
-			Compression:          kvOpts.Compression,
+			Compression:          kvOpts.GetCompression(),
 		}
-		if kvOpts.Ttl != nil {
-			kv.TTL = kvOpts.Ttl.AsDuration()
+		if kvOpts.GetTtl() != nil {
+			kv.TTL = kvOpts.GetTtl().AsDuration()
 		}
-		if kvOpts.LimitMarkerTtl != nil {
-			kv.LimitMarkerTTL = kvOpts.LimitMarkerTtl.AsDuration()
+		if kvOpts.GetLimitMarkerTtl() != nil {
+			kv.LimitMarkerTTL = kvOpts.GetLimitMarkerTtl().AsDuration()
 		}
-		if kvOpts.KeyTtl != nil {
-			kv.KeyTTL = kvOpts.KeyTtl.AsDuration()
+		if kvOpts.GetKeyTtl() != nil {
+			kv.KeyTTL = kvOpts.GetKeyTtl().AsDuration()
 		}
-		if kvOpts.PurgeTtl != nil {
-			kv.PurgeTTL = kvOpts.PurgeTtl.AsDuration()
+		if kvOpts.GetPurgeTtl() != nil {
+			kv.PurgeTTL = kvOpts.GetPurgeTtl().AsDuration()
 		}
 		opts.KVStore = kv
 	}
 
 	// Object Store options
-	if objOpts, ok := getExtension[*natspb.ObjectStoreOptions](methodOpts, natspb.E_ObjectStore); ok && objOpts.Bucket != "" {
+	if objOpts, ok := getExtension[*natspb.ObjectStoreOptions](methodOpts, natspb.E_ObjectStore); ok && objOpts.GetBucket() != "" {
 		obj := &ObjectStoreOpts{
-			Bucket:      objOpts.Bucket,
-			KeyTemplate: objOpts.KeyTemplate,
-			Description: objOpts.Description,
-			ClientOnly:  objOpts.ClientOnly,
-			Compression: objOpts.Compression,
+			Bucket:      objOpts.GetBucket(),
+			KeyTemplate: objOpts.GetKeyTemplate(),
+			Description: objOpts.GetDescription(),
+			ClientOnly:  objOpts.GetClientOnly(),
+			Compression: objOpts.GetCompression(),
 		}
-		if objOpts.Ttl != nil {
-			obj.TTL = objOpts.Ttl.AsDuration()
+		if objOpts.GetTtl() != nil {
+			obj.TTL = objOpts.GetTtl().AsDuration()
 		}
 		opts.ObjectStore = obj
 	}
@@ -281,19 +281,19 @@ func extractEndpointOptions(method *protogen.Method) EndpointOptions {
 	// Stream options
 	if streamOpts, ok := getExtension[*natspb.StreamOptions](methodOpts, natspb.E_Stream); ok {
 		opts.Stream = &StreamOpts{
-			MaxInflight: streamOpts.MaxInflight,
-			Ordered:     streamOpts.Ordered,
+			MaxInflight: streamOpts.GetMaxInflight(),
+			Ordered:     streamOpts.GetOrdered(),
 		}
 	}
 
 	// Chunked I/O options
 	if chunkOpts, ok := getExtension[*natspb.ChunkedIOOptions](methodOpts, natspb.E_ChunkedIo); ok {
-		chunkField := chunkOpts.ChunkField
+		chunkField := chunkOpts.GetChunkField()
 		if chunkField == "" {
 			chunkField = defaultChunkFieldName
 		}
 
-		effectiveChunkSize := chunkOpts.DefaultChunkSize
+		effectiveChunkSize := chunkOpts.GetDefaultChunkSize()
 		if effectiveChunkSize == 0 {
 			effectiveChunkSize = defaultChunkSize
 		}
@@ -324,7 +324,7 @@ func extractEndpointOptions(method *protogen.Method) EndpointOptions {
 }
 
 func resolveKVWriteMode(kvOpts *natspb.KVStoreOptions) KVWriteMode {
-	switch kvOpts.WriteMode {
+	switch kvOpts.GetWriteMode() {
 	case natspb.KVWriteMode_KV_WRITE_MODE_LAST_WRITE_WINS:
 		return KVWriteModeLastWriteWins
 	case natspb.KVWriteMode_KV_WRITE_MODE_COMPARE_AND_SET:
@@ -332,7 +332,7 @@ func resolveKVWriteMode(kvOpts *natspb.KVStoreOptions) KVWriteMode {
 	case natspb.KVWriteMode_KV_WRITE_MODE_CREATE_ONLY:
 		return KVWriteModeCreateOnly
 	default:
-		if kvOpts.KeyTtl != nil {
+		if kvOpts.GetKeyTtl() != nil {
 			return KVWriteModeCompareAndSet
 		}
 		return KVWriteModeLastWriteWins
@@ -340,7 +340,7 @@ func resolveKVWriteMode(kvOpts *natspb.KVStoreOptions) KVWriteMode {
 }
 
 func resolveKVPersistFailurePolicy(kvOpts *natspb.KVStoreOptions) KVPersistFailurePolicy {
-	switch kvOpts.PersistFailurePolicy {
+	switch kvOpts.GetPersistFailurePolicy() {
 	case natspb.KVPersistFailurePolicy_KV_PERSIST_FAILURE_POLICY_REQUIRED:
 		return KVPersistFailurePolicyRequired
 	default:

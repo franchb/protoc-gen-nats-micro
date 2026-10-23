@@ -1,14 +1,9 @@
 version: v2
+deps:
+  - buf.build/googleapis/googleapis
 modules:
   - path: extensions/proto
   - path: examples/protos
-  - path: third_party/googleapis
-    breaking:
-      use:
-        - FILE
-    lint:
-      use:
-        - MINIMAL
 breaking:
   use:
     - FILE

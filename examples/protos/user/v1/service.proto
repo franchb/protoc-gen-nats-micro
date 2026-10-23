@@ -1,10 +1,12 @@
-syntax = "proto3";
+edition = "2026";
 
 package user.v1;
 
+import "google/protobuf/go_features.proto";
 import "natsmicro/options.proto";
 
 option go_package = "example/gen/user/v1";
+option features.(pb.go).api_level = API_OPAQUE;
 
 // User service definition
 // This service uses JSON encoding for human-readable message debugging

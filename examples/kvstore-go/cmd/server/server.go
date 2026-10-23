@@ -11,6 +11,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"google.golang.org/protobuf/proto"
 
 	kvdemov1 "example/gen/kvstore_demo/v1"
 )
@@ -24,45 +25,45 @@ type kvDemoService struct {
 }
 
 func (s *kvDemoService) SaveProfile(ctx context.Context, req *kvdemov1.SaveProfileRequest) (*kvdemov1.ProfileResponse, error) {
-	resp := &kvdemov1.ProfileResponse{
-		Id:        req.Id,
-		Name:      req.Name,
-		Email:     req.Email,
-		Bio:       req.Bio,
-		UpdatedAt: time.Now().Format(time.RFC3339),
-	}
+	resp := kvdemov1.ProfileResponse_builder{
+		Id:        proto.String(req.GetId()),
+		Name:      proto.String(req.GetName()),
+		Email:     proto.String(req.GetEmail()),
+		Bio:       proto.String(req.GetBio()),
+		UpdatedAt: proto.String(time.Now().Format(time.RFC3339)),
+	}.Build()
 
 	// Store in-memory (the KV auto-persistence happens in generated handler code)
-	s.profiles[req.Id] = resp
+	s.profiles[req.GetId()] = resp
 
-	log.Printf("✓ SaveProfile: saved profile for %s (%s)", req.Name, req.Id)
+	log.Printf("✓ SaveProfile: saved profile for %s (%s)", req.GetName(), req.GetId())
 	return resp, nil
 }
 
 func (s *kvDemoService) GetProfile(ctx context.Context, req *kvdemov1.GetProfileRequest) (*kvdemov1.ProfileResponse, error) {
-	profile, ok := s.profiles[req.Id]
+	profile, ok := s.profiles[req.GetId()]
 	if !ok {
-		return nil, fmt.Errorf("profile not found: %s", req.Id)
+		return nil, fmt.Errorf("profile not found: %s", req.GetId())
 	}
 
-	log.Printf("✓ GetProfile: returning profile for %s", req.Id)
+	log.Printf("✓ GetProfile: returning profile for %s", req.GetId())
 	return profile, nil
 }
 
 func (s *kvDemoService) GenerateReport(ctx context.Context, req *kvdemov1.GenerateReportRequest) (*kvdemov1.ReportResponse, error) {
 	// Simulate report generation
 	content := []byte(fmt.Sprintf("Report: %s (format: %s)\nGenerated at: %s",
-		req.Title, req.Format, time.Now().Format(time.RFC3339)))
+		req.GetTitle(), req.GetFormat(), time.Now().Format(time.RFC3339)))
 
-	resp := &kvdemov1.ReportResponse{
-		Id:          req.Id,
-		Title:       req.Title,
+	resp := kvdemov1.ReportResponse_builder{
+		Id:          proto.String(req.GetId()),
+		Title:       proto.String(req.GetTitle()),
 		Content:     content,
-		ContentType: fmt.Sprintf("application/%s", req.Format),
-		SizeBytes:   int64(len(content)),
-	}
+		ContentType: proto.String(fmt.Sprintf("application/%s", req.GetFormat())),
+		SizeBytes:   proto.Int64(int64(len(content))),
+	}.Build()
 
-	log.Printf("✓ GenerateReport: created %s report '%s' (%d bytes)", req.Format, req.Title, len(content))
+	log.Printf("✓ GenerateReport: created %s report '%s' (%d bytes)", req.GetFormat(), req.GetTitle(), len(content))
 	return resp, nil
 }
 

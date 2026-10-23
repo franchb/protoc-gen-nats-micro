@@ -1,11 +1,14 @@
-syntax = "proto3";
+edition = "2026";
 
 package common.types.v1;
 
+import "google/protobuf/go_features.proto";
+
 option go_package = "example/gen/common/types/v1";
+option features.(pb.go).api_level = API_OPAQUE;
 
 // Timestamp represents a point in time
-message Timestamp {
+export message Timestamp {
   int64 seconds = 1;
   int32 nanos = 2;
 }

@@ -88,13 +88,16 @@ go install github.com/franchb/protoc-gen-nats-micro/tools/protoc-gen-nats-micro@
 
 Signed binary releases are also available on the [Releases page](https://github.com/franchb/protoc-gen-nats-micro/releases).
 
-### Vendored Proto Options
+### Proto options
 
-Copy `extensions/proto/natsmicro/options.proto` from this repo into your project at `protos/natsmicro/options.proto`. Keep `import "natsmicro/options.proto";` in your service protos and run `buf generate` against your local proto tree.
+Copy `extensions/proto/natsmicro/options.proto` into your project at `protos/natsmicro/options.proto`. Keep `import "natsmicro/options.proto";` in your service protos. The file is edition 2026 and sets `features.(pb.go).api_level = API_OPAQUE`, so Go code generated from it is opaque. Generation needs Buf v1.75.0 or newer and `protoc-gen-go` v1.37.0-rc.1 or a later release that supports edition 2026.
 
-This repo vendors the upstream `google/api` protos locally under
-`third_party/googleapis`, so its own `buf generate` flow does not depend on the
-`buf.build/googleapis/googleapis` registry module.
+When a service imports `google/api/annotations.proto`, depend on the Buf module instead of vendoring it:
+
+```yaml
+deps:
+  - buf.build/googleapis/googleapis
+```
 
 ### Generate Code
 
@@ -126,13 +129,16 @@ go run ./examples/complex-client
 ### 1. Define Service in Protobuf
 
 ```protobuf
-syntax = "proto3";
+edition = "2026";
 
 package order.v1;
 
+import "google/protobuf/go_features.proto";
 import "natsmicro/options.proto";
 import "google/api/annotations.proto";
 import "google/protobuf/duration.proto";
+
+option features.(pb.go).api_level = API_OPAQUE;
 
 service OrderService {
   option (natsmicro.service) = {
@@ -217,6 +223,7 @@ package main
 
 import (
     "context"
+    "google.golang.org/protobuf/proto"
     orderv1 "yourmodule/gen/order/v1"
 )
 
@@ -228,25 +235,25 @@ func (s *orderService) CreateOrder(
     ctx context.Context,
     req *orderv1.CreateOrderRequest,
 ) (*orderv1.CreateOrderResponse, error) {
-    order := &orderv1.Order{
-        Id:         generateID(),
-        CustomerId: req.CustomerId,
-        Items:      req.Items,
-        Status:     orderv1.OrderStatus_PENDING,
-    }
-    s.orders[order.Id] = order
-    return &orderv1.CreateOrderResponse{Order: order}, nil
+    order := orderv1.Order_builder{
+        Id:         proto.String(generateID()),
+        CustomerId: proto.String(req.GetCustomerId()),
+        Items:      req.GetItems(),
+        Status:     orderv1.OrderStatus_PENDING.Enum(),
+    }.Build()
+    s.orders[order.GetId()] = order
+    return orderv1.CreateOrderResponse_builder{Order: order}.Build(), nil
 }
 
 func (s *orderService) GetOrder(
     ctx context.Context,
     req *orderv1.GetOrderRequest,
 ) (*orderv1.GetOrderResponse, error) {
-    order, exists := s.orders[req.Id]
+    order, exists := s.orders[req.GetId()]
     if !exists {
         return nil, errors.New("order not found")
     }
-    return &orderv1.GetOrderResponse{Order: order}, nil
+    return orderv1.GetOrderResponse_builder{Order: order}.Build(), nil
 }
 ```
 
@@ -297,6 +304,7 @@ package main
 import (
     "context"
     "github.com/nats-io/nats.go"
+    "google.golang.org/protobuf/proto"
     orderv1 "yourmodule/gen/order/v1"
 )
 
@@ -310,18 +318,21 @@ func main() {
     client := orderv1.NewOrderServiceNatsClient(nc)
 
     resp, err := client.CreateOrder(context.Background(),
-        &orderv1.CreateOrderRequest{
-            CustomerId: "user-123",
+        orderv1.CreateOrderRequest_builder{
+            CustomerId: proto.String("user-123"),
             Items: []*orderv1.OrderItem{
-                {ProductId: "prod-456", Quantity: 2},
+                orderv1.OrderItem_builder{
+                    ProductId: proto.String("prod-456"),
+                    Quantity:  proto.Int32(2),
+                }.Build(),
             },
-        },
+        }.Build(),
     )
     if err != nil {
         log.Fatal(err)
     }
 
-    fmt.Printf("Created order: %s\n", resp.Order.Id)
+    fmt.Printf("Created order: %s\n", resp.GetOrder().GetId())
 }
 ```
 
@@ -750,7 +761,7 @@ Planned: Rust, Python
 **Client-side:**
 
 ```go
-product, err := client.GetProduct(ctx, &productv1.GetProductRequest{Id: "123"})
+product, err := client.GetProduct(ctx, productv1.GetProductRequest_builder{Id: proto.String("123")}.Build())
 if productv1.IsProductServiceNotFound(err) {
     // Handle not found
 }

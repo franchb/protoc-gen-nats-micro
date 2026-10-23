@@ -1,4 +1,4 @@
-syntax = "proto3";
+edition = "2026";
 
 package order.v1;
 
@@ -8,8 +8,10 @@ import "common/types/v1/status.proto";
 import "common/metadata/v1/metadata.proto";
 import "natsmicro/options.proto";
 import "google/api/annotations.proto";
+import "google/protobuf/go_features.proto";
 
 option go_package = "example/gen/order/v1";
+option features.(pb.go).api_level = API_OPAQUE;
 
 // Order service with complex types
 

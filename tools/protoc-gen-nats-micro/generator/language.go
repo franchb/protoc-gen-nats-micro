@@ -146,6 +146,7 @@ func FuncMap() template.FuncMap {
 		// Streaming detection
 		"IsServerStreaming": IsServerStreaming,
 		"IsClientStreaming": IsClientStreaming,
+		"InputIsOpaque":     inputIsOpaque,
 		"IsBidiStreaming":   IsBidiStreaming,
 		"IsUnary":           IsUnary,
 		// KV/ObjectStore key template resolution

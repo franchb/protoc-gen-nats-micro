@@ -16,10 +16,10 @@ func TestGenerateFileRejectsChunkedIOOnUnaryMethod(t *testing.T) {
 		messageDescriptor("UploadRequest", bytesField("data", 1)),
 		messageDescriptor("UploadResponse", bytesField("data", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Upload", "UploadRequest", "UploadResponse", false, false, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Upload", "UploadRequest", "UploadResponse", false, false, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -39,10 +39,10 @@ func TestGenerateFileRejectsChunkedIOWithoutBytesChunkField(t *testing.T) {
 		messageDescriptor("DownloadRequest", stringField("id", 1)),
 		messageDescriptor("SnapshotChunk", stringField("data", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -61,10 +61,10 @@ func TestGenerateFileRejectsChunkedIOOnBidiMethod(t *testing.T) {
 	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
 		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Sync", "SnapshotChunk", "SnapshotChunk", true, true, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Sync", "SnapshotChunk", "SnapshotChunk", true, true, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -87,10 +87,10 @@ func TestGenerateFileRejectsChunkedIOWithExtraFields(t *testing.T) {
 			stringField("checksum", 2),
 		),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -110,10 +110,10 @@ func TestGenerateFileRejectsChunkedIOWithRepeatedBytes(t *testing.T) {
 		messageDescriptor("DownloadRequest", stringField("id", 1)),
 		messageDescriptor("SnapshotChunk", repeatedBytesField("data", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -134,14 +134,14 @@ func TestGenerateFileEmitsChunkedHelpersForValidStreamingMethods(t *testing.T) {
 		messageDescriptor("UploadResponse", stringField("id", 1)),
 		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
-		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -279,10 +279,10 @@ func TestGenerateFileEmitsChunkedHelpersForTypeScript(t *testing.T) {
 		messageDescriptor("DownloadRequest", stringField("id", 1)),
 		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -398,10 +398,10 @@ func TestGenerateFileEmitsChunkedUploadForTypeScript(t *testing.T) {
 		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
 		messageDescriptor("UploadResponse", stringField("id", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -460,10 +460,10 @@ func TestGenerateFileEmitsChunkedHelpersForPython(t *testing.T) {
 		messageDescriptor("DownloadRequest", stringField("id", 1)),
 		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Download", "DownloadRequest", "SnapshotChunk", false, true, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
@@ -527,10 +527,10 @@ func TestValidateChunkedIOWorksForAllLanguages(t *testing.T) {
 	file := buildTestFile(t, []*descriptorpb.DescriptorProto{
 		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Sync", "SnapshotChunk", "SnapshotChunk", true, true, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Sync", "SnapshotChunk", "SnapshotChunk", true, true, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	for _, tt := range languages {
@@ -610,10 +610,10 @@ func TestGenerateFileEmitsChunkedUploadForPython(t *testing.T) {
 		messageDescriptor("SnapshotChunk", bytesField("data", 1)),
 		messageDescriptor("UploadResponse", stringField("id", 1)),
 	}, []*descriptorpb.MethodDescriptorProto{
-		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, &natspb.ChunkedIOOptions{
-			ChunkField:       "data",
-			DefaultChunkSize: 65536,
-		}),
+		methodDescriptor("Upload", "SnapshotChunk", "UploadResponse", true, false, natspb.ChunkedIOOptions_builder{
+			ChunkField:       proto.String("data"),
+			DefaultChunkSize: proto.Int32(65536),
+		}.Build()),
 	})
 
 	gen, target := newTestPlugin(t, file)
